@@ -15,7 +15,7 @@ COPY . .
 
 # Set environment variables
 ENV NODE_ENV=production
-ENV PORT=8000
+ENV PORT=86
 ENV MONGO_URI=mongodb://192.168.13.84/transportHira
 ENV SMTP_HOST=smtp.gmail.com
 ENV SMTP_USER=techsupport@rrispat.com 
@@ -38,10 +38,10 @@ CMD ["node", "index.js"]
 
 
 
-# docker build  --no-cache -t 192.168.13.72:5000/rr_logiyatra_be .      
-# docker run -d --name rr_logiyatra_be -p 8000:8000 rr_logiyatra_be_image
+# docker build  --no-cache -t 192.168.13.72:5000/logiq_be .      
+# docker run -d --name logiq_be -p 86:86 logiq_be_image
 
-# docker tag rr_logiyatra_be_image 192.168.13.72:5000/rr_logiyatra_be
-# docker push 192.168.13.72:5000/rr_logiyatra_be
-# docker pull 192.168.13.72:5000/rr_logiyatra_be
-# docker run -d --name rr_logiyatra_be -p 8000:8000 192.168.13.72:5000/rr_logiyatra_be
+# docker tag logiq_be_image 192.168.13.72:5000/logiq_be
+# docker push 192.168.13.72:5000/logiq_be
+# docker pull 192.168.13.72:5000/logiq_be
+# docker run -d --name logiq_be -p 86:86 192.168.13.72:5000/logiq_be
