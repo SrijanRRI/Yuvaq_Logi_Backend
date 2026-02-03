@@ -15,6 +15,8 @@ import {
   // getAllFinalizedTendersWithQuotations
 } from "../controller/tenderController.js";
 
+import { createFinalizeOrder, verifyFinalizePayment } from "../controller/paymentController.js";
+
 import {jwtAuth} from "../middleware/jwtAuth.js";
 
 const router = express.Router();
@@ -51,5 +53,9 @@ router.get("/transporter/upcoming", jwtAuth, getUpcomingTendersForTransporter);
 router.post("/reopen/:id", jwtAuth, reopenTender);
 
 router.post("/:id/notify", notifyTenderTransporters);
+
+router.post("/:id/finalize/payment/order", jwtAuth, createFinalizeOrder);
+
+router.post("/:id/finalize/payment/verify", jwtAuth, verifyFinalizePayment);
 
 export default router;
