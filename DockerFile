@@ -16,12 +16,17 @@ COPY . .
 # Set environment variables
 ENV NODE_ENV=production
 ENV PORT=86
-ENV MONGO_URI=mongodb://192.168.13.84/transportHira
+ENV MONGO_URI=mongodb://192.168.13.84/Yuvaq_Logiyatra_testing
 ENV SMTP_HOST=smtp.gmail.com
 ENV SMTP_USER=techsupport@rrispat.com 
 ENV SMTP_PASS=kjdgsyrnkvdmcugw
-ENV CLIENT_URL=https://logiyatra.rrispat.in
+ENV CLIENT_URL=https://Logiq.yuvaq.com
 ENV SECRET=98a09ad7dasd6sfd4d5sd7fokjnu
+
+# RRI Razorpay Test
+ENV RAZORPAY_KEY_ID=rzp_test_u85r2jwM23xKlY
+ENV RAZORPAY_KEY_SECRET=0q84vUiUDgL7ikOtM6q8mj8i
+ENV RAZORPAY_WEBHOOK_SECRET=LogiQ_123
 
 # MinIO configuration
 ENV MINIO_ENDPOINT=192.168.13.62
@@ -38,10 +43,10 @@ CMD ["node", "index.js"]
 
 
 
-# docker build  --no-cache -t 192.168.13.72:5000/logiq_be .      
-# docker run -d --name logiq_be -p 86:86 logiq_be_image
+# docker build  --no-cache -t 192.168.13.72:5000/Logiq_be .      
+# docker run -d --name Logiq_be -p 86:86 Logiq_be_image
 
-# docker tag logiq_be_image 192.168.13.72:5000/logiq_be
-# docker push 192.168.13.72:5000/logiq_be
-# docker pull 192.168.13.72:5000/logiq_be
-# docker run -d --name logiq_be -p 86:86 192.168.13.72:5000/logiq_be
+# docker tag Logiq_be_image 192.168.13.72:5000/Logiq_be
+# docker push 192.168.13.72:5000/Logiq_be
+# docker pull 192.168.13.72:5000/Logiq_be
+# docker run -d --name Logiq_be -p 86:86 192.168.13.72:5000/Logiq_be
