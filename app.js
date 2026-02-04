@@ -16,7 +16,7 @@ const app = express();
 
 connectToDb()
 
-app.use(cors({ origin: [process.env.CLIENT_URL,"http://localhost:5173", "http://192.168.13.60", "http://192.168.13.77:5173"] , credentials: true }));
+app.use(cors({ origin: [process.env.CLIENT_URL,"http://localhost:5173", "http://192.168.13.77:5173" , "http://192.168.13.86:85" , "https://logiq.yuvaq.com"] , credentials: true }));
 
 app.use(express.json({
   verify: (req, res, buf) => {
