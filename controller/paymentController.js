@@ -2,22 +2,24 @@ import crypto from "crypto";
 import { razorpay } from "../services/razorpayClient.js";
 import TenderPayment from "../models/TenderPayment.js";
 
-// import Tender from "../models/Tender.js";       // <-- use your real model
-// import Quotation from "../models/Quotation.js"; // <-- use your real model
+import Tender from "../models/tenderSchema.js";
+import Quotation from "../models/quotationSchema.js";
 
 const INR_TO_PAISE = (inr) => Math.round(Number(inr) * 100);
 
-function hmacSHA256(secret, payload) {
-  return crypto.createHmac("sha256", secret).update(payload).digest("hex");
+function makeReceipt(tenderId) {
+  const idPart = String(tenderId).slice(-8);
+  const tsPart = Date.now().toString(36);
+  const rnd = crypto.randomBytes(2).toString("hex");
+  return `td_${idPart}_${tsPart}_${rnd}`.slice(0, 40);
 }
 
-function makeReceipt(tenderId) {
-  // Example: td_a1b2c3d4_k9z3l0p (always short)
-  const idPart = String(tenderId).slice(-8); // last 8 chars of ObjectId
-  const tsPart = Date.now().toString(36); // base36 timestamp (short)
-  const rnd = crypto.randomBytes(2).toString("hex"); // 4 chars random
-  const receipt = `td_${idPart}_${tsPart}_${rnd}`;
-  return receipt.slice(0, 40); // hard cap
+function sumMaterialWeightMt(materials = []) {
+  return (materials || []).reduce((sum, m) => sum + Number(m?.weight || 0), 0);
+}
+
+function hmacSHA256(secret, payload) {
+  return crypto.createHmac("sha256", secret).update(payload).digest("hex");
 }
 
 /**
@@ -26,43 +28,101 @@ function makeReceipt(tenderId) {
  * body: { quotationId, finalPrice }
  */
 export const createFinalizeOrder = async (req, res) => {
-  if (!req.user?.id) {
-    return res.status(401).json({ message: "Unauthorized" });
-  }
+  if (!req.user?.id) return res.status(401).json({ message: "Unauthorized" });
 
   try {
     const tenderId = req.params.id;
-    const { quotationId, finalPrice } = req.body;
 
-    const price = Number(finalPrice);
-    if (!Number.isFinite(price) || price <= 0) {
-      return res.status(400).json({ message: "Invalid finalPrice" });
-    }
-    if (!quotationId) {
+    // Accept both payload styles:
+    // - legacy: { quotationId, finalPrice }  (treated as order INR)
+    // - new:    { quotationId, finalPricePerMt, totalWeightMt, advancePercentNotice }
+    const { quotationId } = req.body;
+
+    if (!quotationId)
       return res.status(400).json({ message: "quotationId is required" });
+
+    const tender = await Tender.findById(tenderId);
+    if (!tender) return res.status(404).json({ message: "Tender not found" });
+
+    // Ensure only creator can pay/finalize
+    if (String(tender.createdBy) !== String(req.user.id)) {
+      return res.status(403).json({ message: "Unauthorized" });
     }
 
-    const amount = INR_TO_PAISE(price);
+    if (tender.status === "finalized" || tender.selectedQuotation) {
+      return res.status(400).json({ message: "Tender already finalized" });
+    }
 
-    const notes = {
-      purpose: "tender_finalization",
+    const quotation = await Quotation.findOne({
+      _id: quotationId,
+      tender: tenderId,
+    });
+    if (!quotation)
+      return res.status(400).json({ message: "Invalid quotation" });
+
+    // NEW MODE (recommended): compute advance from (price/MT * totalWeight)
+    const percent = Number(
+      req.body.advancePercentNotice ?? req.body.advancePercent ?? 5,
+    );
+    const finalPricePerMt = Number(req.body.finalPricePerMt ?? quotation.price);
+
+    const totalWeightMt = Number(
+      req.body.totalWeightMt ??
+        tender.totalWeight ??
+        sumMaterialWeightMt(tender.materials || []),
+    );
+
+    const hasNewInputs =
+      Number.isFinite(finalPricePerMt) &&
+      finalPricePerMt > 0 &&
+      Number.isFinite(totalWeightMt) &&
+      totalWeightMt > 0 &&
+      Number.isFinite(percent) &&
+      percent > 0;
+
+    let amountPaise;
+    let notes = {
+      purpose: "tender_finalization_advance",
       tenderId: String(tenderId),
       quotationId: String(quotationId),
-      rrUserId: String(req.user?.id || ""),
-      finalPriceINR: String(price),
+      rrUserId: String(req.user.id || ""),
     };
 
+    if (hasNewInputs) {
+      const totalRupees = finalPricePerMt * totalWeightMt;
+      const advanceRupees = (totalRupees * percent) / 100;
+      amountPaise = INR_TO_PAISE(advanceRupees);
+
+      notes = {
+        ...notes,
+        mode: "computed_advance",
+        finalPricePerMt: String(finalPricePerMt),
+        totalWeightMt: String(totalWeightMt),
+        totalRupees: String(totalRupees),
+        advancePercent: String(percent),
+        advanceRupees: String(advanceRupees),
+      };
+    } else {
+      // LEGACY MODE: finalPrice is treated as order INR (client decided)
+      const price = Number(req.body.finalPrice);
+      if (!Number.isFinite(price) || price <= 0) {
+        return res.status(400).json({ message: "Invalid finalPrice" });
+      }
+      amountPaise = INR_TO_PAISE(price);
+      notes = { ...notes, mode: "legacy_amount", finalPriceINR: String(price) };
+    }
+
     const order = await razorpay.orders.create({
-      amount,
+      amount: amountPaise,
       currency: "INR",
-      receipt: makeReceipt(tenderId), // ✅ FIXED
+      receipt: makeReceipt(tenderId),
       notes,
     });
 
     await TenderPayment.create({
       tenderId,
       quotationId,
-      rrUserId: req.user?.id,
+      rrUserId: req.user.id,
       razorpayOrderId: order.id,
       amount: order.amount,
       currency: order.currency,

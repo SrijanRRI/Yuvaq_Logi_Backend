@@ -62,14 +62,20 @@ export const createTender = async (req, res) => {
     let shipmentPlanRef = null;
     if (shipmentPlanId) {
       if (!mongoose.isValidObjectId(shipmentPlanId)) {
-        return res.status(400).json({ success: false, message: "Invalid shipmentPlanId" });
+        return res
+          .status(400)
+          .json({ success: false, message: "Invalid shipmentPlanId" });
       }
       shipmentPlanRef = shipmentPlanId;
     }
 
     // validate priceDifference if provided
     let priceDifferenceValue;
-    if (priceDifference !== undefined && priceDifference !== null && priceDifference !== "") {
+    if (
+      priceDifference !== undefined &&
+      priceDifference !== null &&
+      priceDifference !== ""
+    ) {
       const n = Number(priceDifference);
       if (!Number.isFinite(n)) {
         return res.status(400).json({
@@ -77,16 +83,19 @@ export const createTender = async (req, res) => {
           message: "priceDifference must be a valid number",
         });
       }
-      
+
       priceDifferenceValue = n;
     }
 
     // time conversions (IST → UTC)
     const timezone = "Asia/Kolkata";
     const utcBiddingStart = moment.tz(biddingStart, timezone).utc().toDate();
-    const utcBiddingEnd   = moment.tz(biddingEnd, timezone).utc().toDate();
-    const utcDeliveryFrom = moment.tz(deliveryWindow.from, timezone).utc().toDate();
-    const utcDeliveryTo   = moment.tz(deliveryWindow.to, timezone).utc().toDate();
+    const utcBiddingEnd = moment.tz(biddingEnd, timezone).utc().toDate();
+    const utcDeliveryFrom = moment
+      .tz(deliveryWindow.from, timezone)
+      .utc()
+      .toDate();
+    const utcDeliveryTo = moment.tz(deliveryWindow.to, timezone).utc().toDate();
 
     let utcCloseDate = null;
     if (closeDate) {
@@ -187,6 +196,10 @@ export const finalizeTender = async (req, res) => {
     tender.status = "finalized";
     await tender.save();
 
+    // ✅ Email result to send back to frontend
+    let emailSent = false;
+    let emailError = null;
+
     // ✅ Email Notification to Transport User
     try {
       await sendMail({
@@ -227,10 +240,10 @@ export const finalizeTender = async (req, res) => {
                       <td>${moment(tender.deliveryWindow.from)
                         .tz("Asia/Kolkata")
                         .format("DD MMM YYYY")} to ${moment(
-          tender.deliveryWindow.to
-        )
-          .tz("Asia/Kolkata")
-          .format("DD MMM YYYY")}</td>
+                        tender.deliveryWindow.to,
+                      )
+                        .tz("Asia/Kolkata")
+                        .format("DD MMM YYYY")}</td>
                     </tr>
                   </table>
 
@@ -240,9 +253,9 @@ export const finalizeTender = async (req, res) => {
                       .map(
                         (mat) => `
                       <li>${mat.material} (${mat.subMaterial || "N/A"}) - ${
-                          mat.weight
-                        } MT, ${mat.quantity} Qty</li>
-                    `
+                        mat.weight
+                      } MT, ${mat.quantity} Qty</li>
+                    `,
                       )
                       .join("")}
                   </ul>
@@ -274,14 +287,21 @@ export const finalizeTender = async (req, res) => {
           </div>
         `,
       });
+
+      emailSent = true;
     } catch (emailErr) {
+      emailError = emailErr?.message || "Failed to send email";
       console.error("Failed to send finalization email:", emailErr.message);
     }
 
     res.status(200).json({
       success: true,
-      message: "Tender finalized and email sent to transport user",
+      message: emailSent
+        ? "Tender finalized and email sent to transport user"
+        : "Tender finalized but email could not be sent",
       tender,
+      emailSent,
+      emailError, // optional (you can remove if you don’t want to expose it)
     });
   } catch (error) {
     console.error("Error in finalizeTender:", error);
@@ -353,7 +373,7 @@ export const getTendersForTransporter = async (req, res) => {
     }).select("tender");
 
     const quotedTenderIds = new Set(
-      transporterQuotations.map((q) => q.tender.toString())
+      transporterQuotations.map((q) => q.tender.toString()),
     );
 
     // Count how many times transporter quoted per tender
@@ -426,7 +446,7 @@ export const getTenderQuotations = async (req, res) => {
 
     const tender = await Tender.findById(tenderId).populate(
       "createdBy",
-      "name email"
+      "name email",
     );
     if (!tender) {
       return res
@@ -628,7 +648,7 @@ export const getQuotationHistoryForTransporter = async (req, res) => {
       const isSelected =
         tender.selectedQuotation &&
         tenderQuotes.some(
-          (q) => q._id.toString() === tender.selectedQuotation.toString()
+          (q) => q._id.toString() === tender.selectedQuotation.toString(),
         );
 
       const formattedQuotes = tenderQuotes.map((q) => {
@@ -810,7 +830,7 @@ export const getMyQuotationPosition = async (req, res) => {
           return new Date(q1.createdAt) - new Date(q2.createdAt);
         }
         return q1.price - q2.price;
-      }
+      },
     );
 
     // ✅ Find current user's rank + their best quote
@@ -878,12 +898,10 @@ export const notifyTenderTransporters = async (req, res) => {
       ? tender.transporters
       : [];
     if (tenderTransporters.length === 0) {
-      return res
-        .status(400)
-        .json({
-          success: false,
-          message: "No transporters attached to this tender",
-        });
+      return res.status(400).json({
+        success: false,
+        message: "No transporters attached to this tender",
+      });
     }
 
     // Optional override: only notify given transporterIds (must be subset)
@@ -892,15 +910,13 @@ export const notifyTenderTransporters = async (req, res) => {
 
     if (Array.isArray(transporterIds) && transporterIds.length > 0) {
       const override = transporterIds.filter((x) =>
-        targetIds.includes(String(x))
+        targetIds.includes(String(x)),
       );
       if (override.length === 0) {
-        return res
-          .status(400)
-          .json({
-            success: false,
-            message: "Provided transporterIds are not part of this tender",
-          });
+        return res.status(400).json({
+          success: false,
+          message: "Provided transporterIds are not part of this tender",
+        });
       }
       targetIds = override;
     }
@@ -999,11 +1015,9 @@ export const notifyTenderTransporters = async (req, res) => {
     });
   } catch (err) {
     console.error("notifyTenderTransporters error:", err);
-    return res
-      .status(500)
-      .json({
-        success: false,
-        message: "Failed to send WhatsApp notifications",
-      });
+    return res.status(500).json({
+      success: false,
+      message: "Failed to send WhatsApp notifications",
+    });
   }
 };
