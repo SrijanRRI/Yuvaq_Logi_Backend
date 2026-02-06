@@ -32,10 +32,6 @@ export const createFinalizeOrder = async (req, res) => {
 
   try {
     const tenderId = req.params.id;
-
-    // Accept both payload styles:
-    // - legacy: { quotationId, finalPrice }  (treated as order INR)
-    // - new:    { quotationId, finalPricePerMt, totalWeightMt, advancePercentNotice }
     const { quotationId } = req.body;
 
     if (!quotationId)
@@ -44,13 +40,16 @@ export const createFinalizeOrder = async (req, res) => {
     const tender = await Tender.findById(tenderId);
     if (!tender) return res.status(404).json({ message: "Tender not found" });
 
-    // Ensure only creator can pay/finalize
     if (String(tender.createdBy) !== String(req.user.id)) {
       return res.status(403).json({ message: "Unauthorized" });
     }
 
+    // If already finalized, don't create/ask payment again
     if (tender.status === "finalized" || tender.selectedQuotation) {
-      return res.status(400).json({ message: "Tender already finalized" });
+      return res.status(200).json({
+        alreadyFinalized: true,
+        message: "Tender already finalized",
+      });
     }
 
     const quotation = await Quotation.findOne({
@@ -60,7 +59,44 @@ export const createFinalizeOrder = async (req, res) => {
     if (!quotation)
       return res.status(400).json({ message: "Invalid quotation" });
 
-    // NEW MODE (recommended): compute advance from (price/MT * totalWeight)
+    const purpose = "tender_finalization_advance";
+
+    // ✅ 1) Check if a payment row already exists (idempotency key)
+    const existing = await TenderPayment.findOne({
+      tenderId,
+      quotationId,
+      rrUserId: req.user.id,
+      purpose,
+    });
+
+    if (existing) {
+      // ✅ Payment already done → do NOT ask again
+      if (existing.status === "paid" || existing.status === "captured") {
+        return res.json({
+          alreadyPaid: true,
+          keyId: process.env.RAZORPAY_KEY_ID,
+          orderId: existing.razorpayOrderId,
+          amount: existing.amount,
+          currency: existing.currency,
+          razorpayPaymentId: existing.razorpayPaymentId || null,
+          notes: existing.notes || {},
+        });
+      }
+
+      // ✅ Order exists but not paid → reuse same orderId (do NOT create new)
+      return res.json({
+        reusedOrder: true,
+        alreadyPaid: false,
+        keyId: process.env.RAZORPAY_KEY_ID,
+        orderId: existing.razorpayOrderId,
+        amount: existing.amount,
+        currency: existing.currency,
+        notes: existing.notes || {},
+      });
+    }
+
+    // ----- No existing row → create NEW order once -----
+
     const percent = Number(
       req.body.advancePercentNotice ?? req.body.advancePercent ?? 5,
     );
@@ -72,45 +108,32 @@ export const createFinalizeOrder = async (req, res) => {
         sumMaterialWeightMt(tender.materials || []),
     );
 
-    const hasNewInputs =
-      Number.isFinite(finalPricePerMt) &&
-      finalPricePerMt > 0 &&
-      Number.isFinite(totalWeightMt) &&
-      totalWeightMt > 0 &&
-      Number.isFinite(percent) &&
-      percent > 0;
+    if (!Number.isFinite(finalPricePerMt) || finalPricePerMt <= 0) {
+      return res.status(400).json({ message: "Invalid finalPricePerMt" });
+    }
+    if (!Number.isFinite(totalWeightMt) || totalWeightMt <= 0) {
+      return res.status(400).json({ message: "Invalid totalWeightMt" });
+    }
+    if (!Number.isFinite(percent) || percent <= 0) {
+      return res.status(400).json({ message: "Invalid advance percent" });
+    }
 
-    let amountPaise;
-    let notes = {
-      purpose: "tender_finalization_advance",
+    const totalRupees = finalPricePerMt * totalWeightMt;
+    const advanceRupees = (totalRupees * percent) / 100;
+    const amountPaise = INR_TO_PAISE(advanceRupees);
+
+    const notes = {
+      purpose,
+      mode: "computed_advance",
       tenderId: String(tenderId),
       quotationId: String(quotationId),
-      rrUserId: String(req.user.id || ""),
+      rrUserId: String(req.user.id),
+      finalPricePerMt: String(finalPricePerMt),
+      totalWeightMt: String(totalWeightMt),
+      totalRupees: String(totalRupees),
+      advancePercent: String(percent),
+      advanceRupees: String(advanceRupees),
     };
-
-    if (hasNewInputs) {
-      const totalRupees = finalPricePerMt * totalWeightMt;
-      const advanceRupees = (totalRupees * percent) / 100;
-      amountPaise = INR_TO_PAISE(advanceRupees);
-
-      notes = {
-        ...notes,
-        mode: "computed_advance",
-        finalPricePerMt: String(finalPricePerMt),
-        totalWeightMt: String(totalWeightMt),
-        totalRupees: String(totalRupees),
-        advancePercent: String(percent),
-        advanceRupees: String(advanceRupees),
-      };
-    } else {
-      // LEGACY MODE: finalPrice is treated as order INR (client decided)
-      const price = Number(req.body.finalPrice);
-      if (!Number.isFinite(price) || price <= 0) {
-        return res.status(400).json({ message: "Invalid finalPrice" });
-      }
-      amountPaise = INR_TO_PAISE(price);
-      notes = { ...notes, mode: "legacy_amount", finalPriceINR: String(price) };
-    }
 
     const order = await razorpay.orders.create({
       amount: amountPaise,
@@ -123,6 +146,7 @@ export const createFinalizeOrder = async (req, res) => {
       tenderId,
       quotationId,
       rrUserId: req.user.id,
+      purpose,
       razorpayOrderId: order.id,
       amount: order.amount,
       currency: order.currency,
@@ -136,8 +160,38 @@ export const createFinalizeOrder = async (req, res) => {
       amount: order.amount,
       currency: order.currency,
       notes,
+      alreadyPaid: false,
+      reusedOrder: false,
     });
   } catch (err) {
+    // if unique index race happens, fetch existing and return it
+    if (err?.code === 11000) {
+      const tenderId = req.params.id;
+      const { quotationId } = req.body;
+      const purpose = "tender_finalization_advance";
+
+      const existing = await TenderPayment.findOne({
+        tenderId,
+        quotationId,
+        rrUserId: req.user.id,
+        purpose,
+      });
+
+      if (existing) {
+        return res.json({
+          alreadyPaid:
+            existing.status === "paid" || existing.status === "captured",
+          reusedOrder: true,
+          keyId: process.env.RAZORPAY_KEY_ID,
+          orderId: existing.razorpayOrderId,
+          amount: existing.amount,
+          currency: existing.currency,
+          razorpayPaymentId: existing.razorpayPaymentId || null,
+          notes: existing.notes || {},
+        });
+      }
+    }
+
     console.error("createFinalizeOrder error:", err);
     return res.status(500).json({ message: "Could not create order" });
   }

@@ -8,6 +8,7 @@ import userModel from "../models/userSchema.js";
 // ✅ Create Tender with bidding window + delivery window
 import moment from "moment-timezone";
 import { sendWhatsAppTemplate } from "../utils/sendWhatsapp.js";
+import TenderPayment from "../models/TenderPayment.js";
 
 export const createTender = async (req, res) => {
   try {
@@ -159,6 +160,24 @@ export const finalizeTender = async (req, res) => {
         .json({ success: false, message: "Tender not found" });
     }
 
+    // idempotent: if already finalized with same quotation → return success
+    if (
+      tender.status === "finalized" &&
+      String(tender.selectedQuotation) === String(quotationId)
+    ) {
+      return res.status(200).json({
+        success: true,
+        message: "Tender already finalized (idempotent)",
+        tender,
+        email: {
+          transporterEmailSent: false,
+          transporterEmailError: null,
+          rrEmailSent: false,
+          rrEmailError: null,
+        },
+      });
+    }
+
     if (tender.status === "finalized" || tender.selectedQuotation) {
       return res.status(400).json({
         success: false,
@@ -170,7 +189,24 @@ export const finalizeTender = async (req, res) => {
       return res.status(403).json({ success: false, message: "Unauthorized" });
     }
 
-    // 🔎 Find quotation
+    // Payment must be captured/paid for this tender+quotation+rrUser
+    const payRow = await TenderPayment.findOne({
+      tenderId: tender._id,
+      quotationId,
+      rrUserId: req.user.id,
+      purpose: "tender_finalization_advance",
+      status: { $in: ["paid", "captured"] },
+    });
+
+    if (!payRow) {
+      return res.status(402).json({
+        success: false,
+        message:
+          "Payment not received for this quotation. Please complete payment first.",
+      });
+    }
+
+    //  Find quotation
     const quotation = await Quotation.findOne({
       _id: quotationId,
       tender: tender._id,
@@ -189,7 +225,7 @@ export const finalizeTender = async (req, res) => {
         .json({ success: false, message: "Transport user not found" });
     }
 
-    // ✅ RR User (tender creator)
+    //  RR User (tender creator)
     const rrUser = await userModel.findById(tender.createdBy).lean();
     if (!rrUser) {
       return res
@@ -307,7 +343,6 @@ export const finalizeTender = async (req, res) => {
       );
     }
 
-  
     // 2) ✅ NEW: Email to RR User (creator) with winner contact details
     try {
       await sendMail({

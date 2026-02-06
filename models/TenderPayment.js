@@ -2,12 +2,13 @@ import mongoose from "mongoose";
 
 const TenderPaymentSchema = new mongoose.Schema(
   {
-    tenderId: { type: mongoose.Schema.Types.ObjectId, ref: "Tender", required: true, index: true },
+    tenderId: { type: mongoose.Schema.Types.ObjectId, ref: "Tender", required: true },
     quotationId: { type: mongoose.Schema.Types.ObjectId, ref: "Quotation", required: true },
     rrUserId: { type: mongoose.Schema.Types.ObjectId, ref: "User", required: true },
 
-    // Razorpay order/payment
-    razorpayOrderId: { type: String, required: true, unique: true, index: true },
+    purpose: { type: String, default: "tender_finalization_advance" },
+
+    razorpayOrderId: { type: String, required: true },
     razorpayPaymentId: { type: String },
     razorpaySignature: { type: String },
 
@@ -18,31 +19,28 @@ const TenderPaymentSchema = new mongoose.Schema(
       type: String,
       enum: ["created", "paid", "captured", "failed"],
       default: "created",
-      index: true,
     },
 
-    // What you want visible in Razorpay dashboard (stored in order notes too)
     notes: { type: Object },
 
-    // Useful payment details (fetched from Razorpay)
-    method: String,
-    bank: String,
-    wallet: String,
-    vpa: String,
-    email: String,
-    contact: String,
-    fee: Number,
-    tax: Number,
-    card: Object,
+    finalizedAt: { type: Date }, // when tender successfully finalized
+    rawPayment: { type: Object },
 
-    paidAt: Date,
-    capturedAt: Date,
-
-    // Raw payload snapshots (optional)
-    rawPayment: Object,
-    webhookEvents: [Object],
+    webhookEvents: [
+      {
+        receivedAt: Date,
+        eventType: String,
+        event: Object,
+      },
+    ],
   },
   { timestamps: true }
+);
+
+// ✅ One active payment row per tender+quotation+rrUser+purpose (prevents double charges)
+TenderPaymentSchema.index(
+  { tenderId: 1, quotationId: 1, rrUserId: 1, purpose: 1 },
+  { unique: true }
 );
 
 export default mongoose.model("TenderPayment", TenderPaymentSchema);

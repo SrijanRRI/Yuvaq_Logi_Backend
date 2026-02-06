@@ -16,11 +16,7 @@ import {
   // getAllFinalizedTendersWithQuotations
 } from "../controller/tenderController.js";
 
-import {
-  createFinalizeOrder,
-  verifyFinalizePayment,
-} from "../controller/paymentController.js";
-
+import { createFinalizeOrder, verifyFinalizePayment } from "../controller/tenderPaymentController.js";
 import { jwtAuth } from "../middleware/jwtAuth.js";
 
 const router = express.Router();
