@@ -62,14 +62,20 @@ export const createTender = async (req, res) => {
     let shipmentPlanRef = null;
     if (shipmentPlanId) {
       if (!mongoose.isValidObjectId(shipmentPlanId)) {
-        return res.status(400).json({ success: false, message: "Invalid shipmentPlanId" });
+        return res
+          .status(400)
+          .json({ success: false, message: "Invalid shipmentPlanId" });
       }
       shipmentPlanRef = shipmentPlanId;
     }
 
     // validate priceDifference if provided
     let priceDifferenceValue;
-    if (priceDifference !== undefined && priceDifference !== null && priceDifference !== "") {
+    if (
+      priceDifference !== undefined &&
+      priceDifference !== null &&
+      priceDifference !== ""
+    ) {
       const n = Number(priceDifference);
       if (!Number.isFinite(n)) {
         return res.status(400).json({
@@ -77,16 +83,19 @@ export const createTender = async (req, res) => {
           message: "priceDifference must be a valid number",
         });
       }
-      
+
       priceDifferenceValue = n;
     }
 
     // time conversions (IST → UTC)
     const timezone = "Asia/Kolkata";
     const utcBiddingStart = moment.tz(biddingStart, timezone).utc().toDate();
-    const utcBiddingEnd   = moment.tz(biddingEnd, timezone).utc().toDate();
-    const utcDeliveryFrom = moment.tz(deliveryWindow.from, timezone).utc().toDate();
-    const utcDeliveryTo   = moment.tz(deliveryWindow.to, timezone).utc().toDate();
+    const utcBiddingEnd = moment.tz(biddingEnd, timezone).utc().toDate();
+    const utcDeliveryFrom = moment
+      .tz(deliveryWindow.from, timezone)
+      .utc()
+      .toDate();
+    const utcDeliveryTo = moment.tz(deliveryWindow.to, timezone).utc().toDate();
 
     let utcCloseDate = null;
     if (closeDate) {
@@ -180,6 +189,14 @@ export const finalizeTender = async (req, res) => {
         .json({ success: false, message: "Transport user not found" });
     }
 
+    // ✅ RR User (tender creator)
+    const rrUser = await userModel.findById(tender.createdBy).lean();
+    if (!rrUser) {
+      return res
+        .status(400)
+        .json({ success: false, message: "RR user not found" });
+    }
+
     // ✅ Update tender with finalization
     tender.selectedQuotation = quotation._id;
     tender.finalTransporter = quotation.transportUser;
@@ -187,23 +204,28 @@ export const finalizeTender = async (req, res) => {
     tender.status = "finalized";
     await tender.save();
 
+    // ✅ Email result to send back to frontend
+    let transporterEmailSent = false;
+    let rrEmailSent = false;
+    let transporterEmailError = null;
+    let rrEmailError = null;
+
     // ✅ Email Notification to Transport User
     try {
       await sendMail({
         to: transportUser.email,
-        subject:
-          "🎉 Congratulations! Your Quotation Has Been Accepted - RR ISPAT",
+        subject: "🎉 Congratulations! Your Quotation Has Been Accepted - LogiQ",
         html: `
           <div style="margin:0; padding:0; background-color:#f4f4f4;">
             <table align="center" border="0" cellpadding="0" cellspacing="0" width="100%" style="max-width:620px; background:#ffffff; margin-top:30px; margin-bottom:30px; border-radius:10px; overflow:hidden; box-shadow: 0 6px 20px rgba(0,0,0,0.15);">
               
               <tr>
-                <td align="center" style="background: #ffffff; padding: 30px;">
-                  <div style="font-family: Arial, sans-serif; font-size: 28px; font-weight: bold;">
-                    <span style="color: #e74c3c;">RR</span> <span style="color: #000;">ISPAT</span>
+                <td align="center" style="background:#ffffff; padding:28px 22px;">
+                  <div style="font-family:Arial, sans-serif; font-size:24px; font-weight:800; color:#111827;">
+                    LogiQ
                   </div>
-                  <div style="font-family: Arial, sans-serif; font-size: 13px; margin-top: 5px; color: #777;">
-                    A Unit of Godawari Power and Ispat Limited
+                  <div style="font-family:Arial, sans-serif; font-size:13px; margin-top:6px; color:#6b7280;">
+                    Reverse Auction System
                   </div>
                 </td>
               </tr>
@@ -227,10 +249,10 @@ export const finalizeTender = async (req, res) => {
                       <td>${moment(tender.deliveryWindow.from)
                         .tz("Asia/Kolkata")
                         .format("DD MMM YYYY")} to ${moment(
-          tender.deliveryWindow.to
-        )
-          .tz("Asia/Kolkata")
-          .format("DD MMM YYYY")}</td>
+                        tender.deliveryWindow.to,
+                      )
+                        .tz("Asia/Kolkata")
+                        .format("DD MMM YYYY")}</td>
                     </tr>
                   </table>
 
@@ -240,9 +262,9 @@ export const finalizeTender = async (req, res) => {
                       .map(
                         (mat) => `
                       <li>${mat.material} (${mat.subMaterial || "N/A"}) - ${
-                          mat.weight
-                        } MT, ${mat.quantity} Qty</li>
-                    `
+                        mat.weight
+                      } MT, ${mat.quantity} Qty</li>
+                    `,
                       )
                       .join("")}
                   </ul>
@@ -255,10 +277,10 @@ export const finalizeTender = async (req, res) => {
                     We sincerely appreciate your cooperation. Further communication regarding dispatch schedules will follow shortly.
                   </p>
 
-                  <p style="margin-top:40px;">
-                    Thanks & Regards,<br>
-                    <span style="font-weight:bold; font-size:18px;">RR ISPAT</span><br>
-                    <small style="color:#777;">A Unit of Godawari Power and Ispat Limited</small>
+                  <p style="margin:24px 0 0;">
+                    Thanks & Regards,<br/>
+                    <strong>LogiQ</strong><br/>
+                    <small style="color:#6b7280;">Reverse Auction System</small>
                   </p>
 
                 </td>
@@ -266,7 +288,7 @@ export const finalizeTender = async (req, res) => {
 
               <tr>
                 <td style="background-color: #f1f1f1; text-align: center; padding: 15px; font-size: 12px; color: #777;">
-                  Building Strong Foundations | <a href="https://www.rrispat.com" style="color: #2E86C1; text-decoration: none;">www.rrispat.com</a>
+                  Building Strong Foundations | <a href="https://www.yuvaq.com/" style="color: #2E86C1; text-decoration: none;">www.yuvaq.com</a>
                 </td>
               </tr>
 
@@ -274,14 +296,127 @@ export const finalizeTender = async (req, res) => {
           </div>
         `,
       });
+
+      transporterEmailSent = true;
     } catch (emailErr) {
-      console.error("Failed to send finalization email:", emailErr.message);
+      transporterEmailError =
+        emailErr?.message || "Failed to send transporter email";
+      console.error(
+        "Failed to send finalization email:",
+        transporterEmailError,
+      );
+    }
+
+  
+    // 2) ✅ NEW: Email to RR User (creator) with winner contact details
+    try {
+      await sendMail({
+        to: rrUser.email,
+        subject:
+          "✅ Tender Finalized - Winner Selected (Transporter Contact Details Included) - LogiQ",
+        html: `
+      <div style="margin:0; padding:0; background-color:#f4f4f4;">
+        <table align="center" cellpadding="0" cellspacing="0" width="100%" style="max-width:620px;background:#fff;margin:30px auto;border-radius:10px;overflow:hidden;box-shadow:0 6px 20px rgba(0,0,0,0.15);">
+          <tr>
+            <td align="center" style="padding:30px;">
+              <div style="font-family:Arial;font-size:28px;font-weight:bold;">
+                <span style="color:#059669;">LogiQ</span>
+              </div>
+              <div style="font-family:Arial;font-size:13px;margin-top:5px;color:#777;">
+                Reverse Auction System
+              </div>
+            </td>
+          </tr>
+
+          <tr>
+            <td style="padding:30px 30px;font-family:Arial;color:#333;font-size:15px;">
+              <p>Hello <strong>${rrUser.name || "RR User"}</strong>,</p>
+
+              <p style="margin-top:15px;">
+                ✅ Your tender has been <strong>FINALIZED</strong>. Below are the tender details and the selected transporter contact details for coordination.
+              </p>
+
+              <table cellpadding="8" cellspacing="0" width="100%" style="margin:16px 0;border:1px solid #e5e7eb;border-radius:8px;">
+                <tr style="background:#f8fafc;">
+                  <td style="font-weight:bold;width:170px;">Tender</td>
+                  <td>${tender.projectName || "-"} (${tender.projectCode || "-"})</td>
+                </tr>
+                <tr>
+                  <td style="font-weight:bold;">Purchase Order</td>
+                  <td>${tender.purchaseOrder || "-"}</td>
+                </tr>
+                <tr style="background:#f8fafc;">
+                  <td style="font-weight:bold;">Dispatch</td>
+                  <td>${[tender.dispatchLocation, tender.address, tender.pincode].filter(Boolean).join(", ") || "-"}</td>
+                </tr>
+                <tr>
+                  <td style="font-weight:bold;">Delivery Window</td>
+                  <td>
+                    ${moment(tender.deliveryWindow.from).tz("Asia/Kolkata").format("DD MMM YYYY")}
+                    to
+                    ${moment(tender.deliveryWindow.to).tz("Asia/Kolkata").format("DD MMM YYYY")}
+                  </td>
+                </tr>
+                <tr style="background:#f8fafc;">
+                  <td style="font-weight:bold;">Finalized Price</td>
+                  <td><strong>₹${Number(finalPrice).toLocaleString("en-IN")}</strong></td>
+                </tr>
+              </table>
+
+              <h3 style="margin:18px 0 8px;font-size:16px;">🚚 Selected Transporter Contact</h3>
+              <table cellpadding="8" cellspacing="0" width="100%" style="border:1px solid #e5e7eb;border-radius:8px;">
+                <tr style="background:#ecfdf5;">
+                  <td style="font-weight:bold;width:170px;">Name</td>
+                  <td>${transportUser.name || "-"}</td>
+                </tr>
+                <tr>
+                  <td style="font-weight:bold;">Email</td>
+                  <td>${transportUser.email || "-"}</td>
+                </tr>
+                <tr style="background:#ecfdf5;">
+                  <td style="font-weight:bold;">Phone</td>
+                  <td>${transportUser.phone || "-"}</td>
+                </tr>
+              </table>
+
+              <p style="margin-top:18px;color:#555;">
+                You can directly contact the transporter for dispatch scheduling and coordination.
+              </p>
+
+              <p style="margin-top:28px;">
+                Thanks & Regards,<br/>
+                <strong style="font-size:18px;">LogiQ</strong><br/>
+                <small style="color:#777;">Reverse Auction System</small>
+              </p>
+            </td>
+          </tr>
+
+          <tr>
+            <td style="background:#f1f1f1;text-align:center;padding:15px;font-size:12px;color:#777;">
+              This is an automated email from LogiQ - Reverse Auction System.
+            </td>
+          </tr>
+        </table>
+      </div>
+    `,
+      });
+
+      rrEmailSent = true;
+    } catch (e) {
+      rrEmailError = e?.message || "Failed to send RR user email";
+      console.error("RR user mail error:", rrEmailError);
     }
 
     res.status(200).json({
       success: true,
-      message: "Tender finalized and email sent to transport user",
+      message: "Tender finalized",
       tender,
+      email: {
+        transporterEmailSent,
+        transporterEmailError,
+        rrEmailSent,
+        rrEmailError,
+      },
     });
   } catch (error) {
     console.error("Error in finalizeTender:", error);
@@ -353,7 +488,7 @@ export const getTendersForTransporter = async (req, res) => {
     }).select("tender");
 
     const quotedTenderIds = new Set(
-      transporterQuotations.map((q) => q.tender.toString())
+      transporterQuotations.map((q) => q.tender.toString()),
     );
 
     // Count how many times transporter quoted per tender
@@ -426,7 +561,7 @@ export const getTenderQuotations = async (req, res) => {
 
     const tender = await Tender.findById(tenderId).populate(
       "createdBy",
-      "name email"
+      "name email",
     );
     if (!tender) {
       return res
@@ -628,7 +763,7 @@ export const getQuotationHistoryForTransporter = async (req, res) => {
       const isSelected =
         tender.selectedQuotation &&
         tenderQuotes.some(
-          (q) => q._id.toString() === tender.selectedQuotation.toString()
+          (q) => q._id.toString() === tender.selectedQuotation.toString(),
         );
 
       const formattedQuotes = tenderQuotes.map((q) => {
@@ -810,7 +945,7 @@ export const getMyQuotationPosition = async (req, res) => {
           return new Date(q1.createdAt) - new Date(q2.createdAt);
         }
         return q1.price - q2.price;
-      }
+      },
     );
 
     // ✅ Find current user's rank + their best quote
@@ -878,12 +1013,10 @@ export const notifyTenderTransporters = async (req, res) => {
       ? tender.transporters
       : [];
     if (tenderTransporters.length === 0) {
-      return res
-        .status(400)
-        .json({
-          success: false,
-          message: "No transporters attached to this tender",
-        });
+      return res.status(400).json({
+        success: false,
+        message: "No transporters attached to this tender",
+      });
     }
 
     // Optional override: only notify given transporterIds (must be subset)
@@ -892,15 +1025,13 @@ export const notifyTenderTransporters = async (req, res) => {
 
     if (Array.isArray(transporterIds) && transporterIds.length > 0) {
       const override = transporterIds.filter((x) =>
-        targetIds.includes(String(x))
+        targetIds.includes(String(x)),
       );
       if (override.length === 0) {
-        return res
-          .status(400)
-          .json({
-            success: false,
-            message: "Provided transporterIds are not part of this tender",
-          });
+        return res.status(400).json({
+          success: false,
+          message: "Provided transporterIds are not part of this tender",
+        });
       }
       targetIds = override;
     }
@@ -999,11 +1130,86 @@ export const notifyTenderTransporters = async (req, res) => {
     });
   } catch (err) {
     console.error("notifyTenderTransporters error:", err);
-    return res
-      .status(500)
-      .json({
+    return res.status(500).json({
+      success: false,
+      message: "Failed to send WhatsApp notifications",
+    });
+  }
+};
+
+export const getFinalizedTransporterContact = async (req, res) => {
+  try {
+    const { id: tenderId } = req.params;
+    const requesterId = req.user.id;
+
+    if (!mongoose.isValidObjectId(tenderId)) {
+      return res
+        .status(400)
+        .json({ success: false, message: "Invalid tender id" });
+    }
+
+    const tender = await Tender.findById(tenderId)
+      .select("status createdBy finalTransporter selectedQuotation")
+      .lean();
+
+    if (!tender) {
+      return res
+        .status(404)
+        .json({ success: false, message: "Tender not found" });
+    }
+
+    // ✅ Only tender creator can reveal
+    if (String(tender.createdBy) !== String(requesterId)) {
+      return res.status(403).json({ success: false, message: "Unauthorized" });
+    }
+
+    // ✅ Must be finalized
+    if (tender.status !== "finalized") {
+      return res.status(400).json({
         success: false,
-        message: "Failed to send WhatsApp notifications",
+        message: "Tender is not finalized yet",
       });
+    }
+
+    // Try to resolve finalized transporter id
+    let transporterId = tender.finalTransporter;
+
+    // fallback if old data: take selectedQuotation.transportUser
+    if (!transporterId && tender.selectedQuotation) {
+      const q = await Quotation.findById(tender.selectedQuotation)
+        .select("transportUser")
+        .lean();
+      transporterId = q?.transportUser;
+    }
+
+    if (!transporterId || !mongoose.isValidObjectId(transporterId)) {
+      return res.status(404).json({
+        success: false,
+        message: "Finalized transporter not found for this tender",
+      });
+    }
+
+    const transporter = await User.findById(transporterId)
+      .select("name email phone")
+      .lean();
+
+    if (!transporter) {
+      return res
+        .status(404)
+        .json({ success: false, message: "Transporter user not found" });
+    }
+
+    return res.status(200).json({
+      success: true,
+      data: {
+        transporterId: transporter._id,
+        name: transporter.name || "",
+        email: transporter.email || "",
+        phone: transporter.phone || "",
+      },
+    });
+  } catch (error) {
+    console.error("getFinalizedTransporterContact error:", error);
+    return res.status(500).json({ success: false, message: error.message });
   }
 };
