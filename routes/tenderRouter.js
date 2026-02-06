@@ -12,12 +12,16 @@ import {
   reopenTender,
   getQuotationHistoryForTransporter,
   notifyTenderTransporters,
+  getFinalizedTransporterContact,
   // getAllFinalizedTendersWithQuotations
 } from "../controller/tenderController.js";
 
-import { createFinalizeOrder, verifyFinalizePayment } from "../controller/paymentController.js";
+import {
+  createFinalizeOrder,
+  verifyFinalizePayment,
+} from "../controller/paymentController.js";
 
-import {jwtAuth} from "../middleware/jwtAuth.js";
+import { jwtAuth } from "../middleware/jwtAuth.js";
 
 const router = express.Router();
 
@@ -26,6 +30,9 @@ router.post("/create-tender", jwtAuth, createTender);
 
 // ✅ 2. Get all tenders created by RR user
 router.get("/my-tenders", getAllTendersByRRUser);
+
+// ✅ Get the transporter details"
+router.get("/transporter-contact/:id/finalized-contact", jwtAuth, getFinalizedTransporterContact);
 
 // ✅ 3. Get all tenders assigned to a transporter
 router.get("/assigned", jwtAuth, getTendersForTransporter);

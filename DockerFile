@@ -20,7 +20,7 @@ ENV MONGO_URI=mongodb://192.168.13.84/Yuvaq_Logiyatra_testing
 ENV SMTP_HOST=smtp.gmail.com
 ENV SMTP_USER=techsupport@rrispat.com 
 ENV SMTP_PASS=kjdgsyrnkvdmcugw
-ENV CLIENT_URL=https://Logiq.yuvaq.com
+ENV CLIENT_URL=https://logiq.yuvaq.com
 ENV SECRET=98a09ad7dasd6sfd4d5sd7fokjnu
 
 # RRI Razorpay Test
@@ -43,10 +43,10 @@ CMD ["node", "index.js"]
 
 
 
-# docker build  --no-cache -t 192.168.13.72:5000/logiq_be .      
-# docker run -d --name logiq_be -p 86:86 logiq_be_image
+# docker build  --no-cache -t 192.168.13.72:5000/logiq_be_4_feb .      
+# docker run -d --name logiq_be_4_feb -p 86:86 logiq_be_image
 
-# docker tag logiq_be_image 192.168.13.72:5000/logiq_be
-# docker push 192.168.13.72:5000/logiq_be
-# docker pull 192.168.13.72:5000/logiq_be
-# docker run -d --name logiq_be -p 86:86 192.168.13.72:5000/logiq_be
+# docker tag logiq_be_image 192.168.13.72:5000/logiq_be_4_feb
+# docker push 192.168.13.72:5000/logiq_be_4_feb
+# docker pull 192.168.13.72:5000/logiq_be_4_feb
+# docker run -d --name logiq_be_4_feb -p 86:86 192.168.13.72:5000/logiq_be_4_feb
