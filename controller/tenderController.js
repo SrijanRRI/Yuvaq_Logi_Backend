@@ -5,7 +5,7 @@ import mongoose from "mongoose";
 import User from "../models/userSchema.js"; // Replace with your actual user model path
 import { sendMail } from "../utils/sendMail.js"; // You must have this utility created
 import userModel from "../models/userSchema.js";
-// ✅ Create Tender with bidding window + delivery window
+//  Create Tender with bidding window + delivery window
 import moment from "moment-timezone";
 import { sendWhatsAppTemplate } from "../utils/sendWhatsapp.js";
 import TenderPayment from "../models/TenderPayment.js";
@@ -31,6 +31,9 @@ export const createTender = async (req, res) => {
       purchaseOrder,
       projectRemark,
       priceDifference, // <-- accept from frontend
+      maxBidAmount,
+      maxBidUnit,
+      minBidAmount,
     } = req.body;
 
     // basic validations
@@ -111,6 +114,39 @@ export const createTender = async (req, res) => {
       quantity: m.quantity,
     }));
 
+    // ✅ validate bid limits
+    const minAmt = Number(minBidAmount);
+    const maxAmt = Number(maxBidAmount);
+
+    if (!Number.isFinite(maxAmt) || maxAmt <= 0) {
+      return res.status(400).json({
+        success: false,
+        message: "maxBidAmount must be a valid number > 0",
+      });
+    }
+
+    if (!Number.isFinite(minAmt) || minAmt < 0) {
+      return res.status(400).json({
+        success: false,
+        message: "minBidAmount must be a valid number >= 0",
+      });
+    }
+
+    const allowedUnits = ["Per MT", "Per Tender"];
+    if (!maxBidUnit || !allowedUnits.includes(String(maxBidUnit))) {
+      return res.status(400).json({
+        success: false,
+        message: "maxBidUnit is required and must be Per MT or Per Tender",
+      });
+    }
+
+    if (minAmt > maxAmt) {
+      return res.status(400).json({
+        success: false,
+        message: "minBidAmount cannot be greater than maxBidAmount",
+      });
+    }
+
     const tenderPayload = {
       createdBy: req.user.id,
       shipmentPlan: shipmentPlanRef || null,
@@ -130,6 +166,9 @@ export const createTender = async (req, res) => {
       projectCode,
       purchaseOrder,
       projectRemark: projectRemark || "",
+      minBidAmount: minAmt, 
+      maxBidAmount: maxAmt, 
+      maxBidUnit: String(maxBidUnit), 
     };
 
     // only set if provided so Mongoose default can apply otherwise
