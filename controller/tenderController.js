@@ -166,9 +166,9 @@ export const createTender = async (req, res) => {
       projectCode,
       purchaseOrder,
       projectRemark: projectRemark || "",
-      minBidAmount: minAmt, 
-      maxBidAmount: maxAmt, 
-      maxBidUnit: String(maxBidUnit), 
+      minBidAmount: minAmt,
+      maxBidAmount: maxAmt,
+      maxBidUnit: String(maxBidUnit),
     };
 
     // only set if provided so Mongoose default can apply otherwise
@@ -1022,6 +1022,17 @@ export const getMyQuotationPosition = async (req, res) => {
       },
     );
 
+    // ✅ EXTRA: L1 info (anonymous, only price + time)
+    const l1Entry = sortedBestQuotes[0];
+    const l1Quote = l1Entry?.[1] || null;
+
+    const l1 = l1Quote
+      ? {
+          price: l1Quote.price,
+          createdAt: l1Quote.createdAt,
+        }
+      : null;
+
     // ✅ Find current user's rank + their best quote
     let position = null;
     let bestQuote = null;
@@ -1052,6 +1063,7 @@ export const getMyQuotationPosition = async (req, res) => {
     res.status(200).json({
       position,
       bestQuotation: bestQuote,
+      l1,
     });
   } catch (error) {
     console.error("Error getting bid position:", error);
