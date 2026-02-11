@@ -118,6 +118,25 @@ export const createFinalizeOrder = async (req, res) => {
       return res.status(400).json({ message: "Invalid advance percent" });
     }
 
+    // ✅ MUST be confirmed BEFORE we reuse/create any Razorpay order
+    if (
+      tender.selection?.status !== "confirmed" ||
+      String(tender.selection?.quotation) !== String(quotationId)
+    ) {
+      return res.status(409).json({
+        success: false,
+        message: "Transporter has not confirmed this quotation yet.",
+      });
+    }
+
+    // ✅ now do TenderPayment lookup (idempotency)
+    // const existing = await TenderPayment.findOne({
+    //   tenderId,
+    //   quotationId,
+    //   rrUserId: req.user.id,
+    //   purpose,
+    // });
+
     const totalRupees = finalPricePerMt * totalWeightMt;
     const advanceRupees = (totalRupees * percent) / 100;
     const amountPaise = INR_TO_PAISE(advanceRupees);
@@ -204,17 +223,41 @@ export const createFinalizeOrder = async (req, res) => {
  */
 export const verifyFinalizePayment = async (req, res) => {
   try {
+    if (!req.user?.id) return res.status(401).json({ message: "Unauthorized" });
+
     const tenderId = req.params.id;
     const {
       quotationId,
-      finalPrice,
+      // finalPrice,
       razorpay_order_id,
       razorpay_payment_id,
       razorpay_signature,
     } = req.body;
 
+    if (!quotationId)
+      return res.status(400).json({ message: "quotationId is required" });
     if (!razorpay_order_id || !razorpay_payment_id || !razorpay_signature) {
       return res.status(400).json({ message: "Missing Razorpay fields" });
+    }
+
+    // Load tender first (your code was missing this)
+    const tender = await Tender.findById(tenderId);
+    if (!tender) return res.status(404).json({ message: "Tender not found" });
+
+    // (optional but recommended) ensure only creator verifies
+    if (String(tender.createdBy) !== String(req.user.id)) {
+      return res.status(403).json({ message: "Unauthorized" });
+    }
+
+    // Guard: transporter must have confirmed the same quotation
+    if (
+      tender.selection?.status !== "confirmed" ||
+      String(tender.selection?.quotation) !== String(quotationId)
+    ) {
+      return res.status(409).json({
+        success: false,
+        message: "Transporter has not confirmed this quotation yet.",
+      });
     }
 
     // 1) Verify signature (server-side)
@@ -239,6 +282,16 @@ export const verifyFinalizePayment = async (req, res) => {
       return res.status(400).json({ message: "Order does not match tender" });
     }
 
+    if (
+      tender.selection?.status !== "confirmed" ||
+      String(tender.selection?.quotation) !== String(quotationId)
+    ) {
+      return res.status(409).json({
+        success: false,
+        message: "Transporter has not confirmed this quotation yet.",
+      });
+    }
+
     // 3) Fetch payment details from Razorpay (for storing method/bank/fee/tax etc)
     const payment = await razorpay.payments.fetch(razorpay_payment_id);
 
@@ -260,23 +313,6 @@ export const verifyFinalizePayment = async (req, res) => {
     if (payment.status === "captured") payRow.capturedAt = new Date();
 
     await payRow.save();
-
-    // 4) ✅ Finalize tender ONLY after payment verified
-    // IMPORTANT: make finalize idempotent (if already finalized, return success)
-    // Example (replace with your existing logic/service):
-    //
-    // const tender = await tenderSchema.findById(tenderId);
-    // if (!tender) return res.status(404).json({ message: "Tender not found" });
-    // if (tender.status !== "finalized") {
-    //   tender.status = "finalized";
-    //   tender.selectedQuotation = quotationId;
-    //   tender.finalPrice = Number(finalPrice);
-    //   tender.finalPayment = {
-    //     orderId: razorpay_order_id,
-    //     paymentId: razorpay_payment_id,
-    //   };
-    //   await tender.save();
-    // }
 
     return res.json({
       ok: true,

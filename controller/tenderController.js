@@ -199,6 +199,16 @@ export const finalizeTender = async (req, res) => {
         .json({ success: false, message: "Tender not found" });
     }
 
+    if (
+      tender.selection?.status !== "confirmed" ||
+      String(tender.selection?.quotation) !== String(quotationId)
+    ) {
+      return res.status(409).json({
+        success: false,
+        message: "Transporter has not confirmed this quotation yet.",
+      });
+    }
+
     // idempotent: if already finalized with same quotation → return success
     if (
       tender.status === "finalized" &&
@@ -1296,6 +1306,290 @@ export const getFinalizedTransporterContact = async (req, res) => {
     });
   } catch (error) {
     console.error("getFinalizedTransporterContact error:", error);
+    return res.status(500).json({ success: false, message: error.message });
+  }
+};
+
+export const requestSelectionConfirmation = async (req, res) => {
+  try {
+    const tenderId = req.params.id;
+    const { quotationId } = req.body;
+
+    if (
+      !mongoose.isValidObjectId(tenderId) ||
+      !mongoose.isValidObjectId(quotationId)
+    ) {
+      return res
+        .status(400)
+        .json({ success: false, message: "Invalid tenderId/quotationId" });
+    }
+
+    const tender = await Tender.findById(tenderId);
+    if (!tender)
+      return res
+        .status(404)
+        .json({ success: false, message: "Tender not found" });
+
+    // only creator can request
+    if (String(tender.createdBy) !== String(req.user.id)) {
+      return res.status(403).json({ success: false, message: "Unauthorized" });
+    }
+
+    if (tender.status === "finalized") {
+      return res
+        .status(400)
+        .json({ success: false, message: "Tender already finalized" });
+    }
+
+    // block if already pending/confirmed
+    if (tender.selection?.status === "pending") {
+      return res.status(409).json({
+        success: false,
+        message: "A transporter confirmation is already pending.",
+      });
+    }
+    if (tender.selection?.status === "confirmed") {
+      return res.status(409).json({
+        success: false,
+        message: "Selection already confirmed. Proceed to payment.",
+      });
+    }
+
+    // optional: allow only after bidding end
+    const now = new Date();
+    if (tender.biddingEnd && now < new Date(tender.biddingEnd)) {
+      return res.status(403).json({
+        success: false,
+        message: "You can request confirmation only after bidding ends.",
+      });
+    }
+
+    const quotation = await Quotation.findOne({
+      _id: quotationId,
+      tender: tender._id,
+    });
+    if (!quotation)
+      return res
+        .status(400)
+        .json({ success: false, message: "Invalid quotation for this tender" });
+
+    // set selection pending
+    tender.selection = {
+      status: "pending",
+      quotation: quotation._id,
+      transporter: quotation.transportUser,
+      requestedAt: new Date(),
+      respondedAt: null,
+      response: null,
+      rejectReason: "",
+    };
+
+    await tender.save();
+
+    // notify transporter by email (your “message goes to them”)
+    try {
+      const transporter = await userModel
+        .findById(quotation.transportUser)
+        .lean();
+      if (transporter?.email) {
+        await sendMail({
+          to: transporter.email,
+          subject: "Your Quotation is Selected — Please Confirm (LogiQ)",
+          html: `
+            <div style="font-family:Arial;line-height:1.5">
+              <h2 style="margin:0 0 10px;color:#059669">LogiQ</h2>
+              <p>Hello <b>${transporter.name || "Transporter"}</b>,</p>
+              <p>Your quotation has been selected for the tender below. Please open your Transporter Dashboard and <b>Accept/Reject</b>.</p>
+              <table cellpadding="6" style="border:1px solid #e5e7eb;border-radius:8px">
+                <tr><td><b>Project</b></td><td>${tender.projectName || "-"}</td></tr>
+                <tr><td><b>Dispatch</b></td><td>${tender.dispatchLocation || "-"}</td></tr>
+                <tr><td><b>Delivery</b></td><td>${
+                  tender.deliveryWindow?.from && tender.deliveryWindow?.to
+                    ? `${moment(tender.deliveryWindow.from).tz("Asia/Kolkata").format("DD MMM YYYY")} → ${moment(tender.deliveryWindow.to).tz("Asia/Kolkata").format("DD MMM YYYY")}`
+                    : "-"
+                }</td></tr>
+                <tr><td><b>Your Price</b></td><td>₹${Number(quotation.price).toLocaleString("en-IN")} / MT</td></tr>
+              </table>
+              <p style="margin-top:12px;color:#6b7280">If you do not respond, RR user cannot proceed to payment & finalization.</p>
+            </div>
+          `,
+        });
+      }
+    } catch (e) {
+      // non-blocking
+      console.error("Selection email failed:", e?.message);
+    }
+
+    return res
+      .status(200)
+      .json({ success: true, message: "Confirmation requested", data: tender });
+  } catch (error) {
+    console.error("requestSelectionConfirmation:", error);
+    return res.status(500).json({ success: false, message: error.message });
+  }
+};
+
+export const respondSelectionConfirmation = async (req, res) => {
+  try {
+    const tenderId = req.params.id;
+    const { action, reason } = req.body; // action: 'accept' | 'reject'
+
+    if (!mongoose.isValidObjectId(tenderId)) {
+      return res
+        .status(400)
+        .json({ success: false, message: "Invalid tenderId" });
+    }
+
+    const tender = await Tender.findById(tenderId);
+    if (!tender)
+      return res
+        .status(404)
+        .json({ success: false, message: "Tender not found" });
+
+    if (tender.selection?.status !== "pending") {
+      return res.status(409).json({
+        success: false,
+        message: "No pending confirmation for this tender.",
+      });
+    }
+
+    if (String(tender.selection.transporter) !== String(req.user.id)) {
+      return res.status(403).json({
+        success: false,
+        message: "Unauthorized: not selected transporter",
+      });
+    }
+
+    if (!["accept", "reject"].includes(action)) {
+      return res
+        .status(400)
+        .json({ success: false, message: "action must be accept/reject" });
+    }
+
+    if (action === "reject" && !String(reason || "").trim()) {
+      return res
+        .status(400)
+        .json({ success: false, message: "Reject reason is required" });
+    }
+
+    tender.selection.respondedAt = new Date();
+
+    if (action === "accept") {
+      tender.selection.status = "confirmed";
+      tender.selection.response = "accepted";
+      tender.selection.rejectReason = "";
+    } else {
+      tender.selection.status = "rejected";
+      tender.selection.response = "rejected";
+      tender.selection.rejectReason = String(reason || "").trim();
+    }
+
+    await tender.save();
+
+    // notify RR user (optional but useful)
+    try {
+      const rrUser = await userModel.findById(tender.createdBy).lean();
+      if (rrUser?.email) {
+        await sendMail({
+          to: rrUser.email,
+          subject:
+            action === "accept"
+              ? "✅ Transporter Confirmed — You Can Proceed to Payment (LogiQ)"
+              : "❌ Transporter Rejected — Please Select Next Quote (LogiQ)",
+          html: `
+            <div style="font-family:Arial;line-height:1.5">
+              <h2 style="margin:0 0 10px;color:#059669">LogiQ</h2>
+              <p>Hello <b>${rrUser.name || "RR User"}</b>,</p>
+              <p>Selected transporter has <b>${action === "accept" ? "ACCEPTED" : "REJECTED"}</b> the confirmation request.</p>
+              ${action === "reject" ? `<p><b>Reason:</b> ${tender.selection.rejectReason}</p>` : ""}
+              <p><b>Project:</b> ${tender.projectName || "-"}</p>
+            </div>
+          `,
+        });
+      }
+    } catch (e) {
+      console.error("RR notify mail failed:", e?.message);
+    }
+
+    return res
+      .status(200)
+      .json({ success: true, message: "Response recorded", data: tender });
+  } catch (error) {
+    console.error("respondSelectionConfirmation:", error);
+    return res.status(500).json({ success: false, message: error.message });
+  }
+};
+
+export const getPendingConfirmationsForTransporter = async (req, res) => {
+  try {
+    const transporterId = req.user.id;
+
+    const tenders = await Tender.find({
+      "selection.status": "pending",
+      "selection.transporter": transporterId,
+    })
+      .sort({ "selection.requestedAt": -1 })
+      .select(
+        [
+          "projectName",
+          "projectCode",
+          "projectRemark", //  remark
+          "dispatchLocation", //  location
+          "address",
+          "pincode",
+          "closeDate", //  close date
+          "deliveryWindow",
+          "materials", //  material list
+          "status",
+          "selection", // contains quotation + requestedAt + etc
+          "createdBy", //  who sent (RR user)
+        ].join(" "),
+      )
+      .populate({
+        path: "createdBy",
+        select: "name email phone", // show RR sender identity
+      })
+      .populate({
+        path: "selection.quotation",
+        select: "price vehicleNumber rank createdAt files", // helpful context for transporter
+      })
+      .lean();
+
+    // Optional: if you store selection.requestedBy in DB, prefer that instead of createdBy:
+    // const requestedBy = t.selection?.requestedBy || t.createdBy
+
+    const data = tenders.map((t) => ({
+      _id: t._id,
+
+      // project/tender details
+      // projectName: t.projectName,
+      // projectCode: t.projectCode,
+      // projectRemark: t.projectRemark || "",
+      dispatchLocation: t.dispatchLocation,
+      address: t.address,
+      pincode: t.pincode,
+      closeDate: t.closeDate,
+      deliveryWindow: t.deliveryWindow,
+      materials: t.materials || [],
+
+      status: t.status,
+
+      // selection meta
+      selection: {
+        status: t.selection?.status,
+        requestedAt: t.selection?.requestedAt,
+        transporter: t.selection?.transporter,
+      },
+
+      // selected quotation details (what transporter is confirming)
+      quotation: t.selection?.quotation || null,
+
+      // who sent the request (RR)
+      requestedBy: t.createdBy || null,
+    }));
+
+    return res.status(200).json({ success: true, data });
+  } catch (error) {
     return res.status(500).json({ success: false, message: error.message });
   }
 };

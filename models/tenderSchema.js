@@ -1,4 +1,4 @@
-import mongoose from "mongoose";
+import mongoose, { Schema } from "mongoose";
 
 const tenderSchema = new mongoose.Schema(
   {
@@ -121,6 +121,30 @@ const tenderSchema = new mongoose.Schema(
     projectCode: { type: String, required: true },
     purchaseOrder: { type: String, required: true, trim: true },
     projectRemark: { type: String, default: "", trim: true },
+
+    selection: {
+      status: {
+        type: String,
+        enum: ["none", "pending", "confirmed", "rejected"],
+        default: "none",
+      },
+      quotation: {
+        type: Schema.Types.ObjectId,
+        ref: "Quotation",
+        default: null,
+      },
+      transporter: { type: Schema.Types.ObjectId, ref: "User", default: null },
+
+      requestedAt: { type: Date, default: null },
+      respondedAt: { type: Date, default: null },
+
+      response: {
+        type: String,
+        enum: ["accepted", "rejected", null],
+        default: null,
+      },
+      rejectReason: { type: String, default: "" },
+    },
   },
   { timestamps: true },
 );
