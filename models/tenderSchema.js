@@ -143,8 +143,43 @@ const tenderSchema = new mongoose.Schema(
         enum: ["accepted", "rejected", null],
         default: null,
       },
-      rejectReason: { type: String, default: "" },
+      rejectReason: { type: String, default: "" }, // transporter reject reason OR rr reopen reason (latest)
     },
+
+    selectionHistory: [
+      {
+        quotation: {
+          type: Schema.Types.ObjectId,
+          ref: "Quotation",
+          default: null,
+        },
+        transporter: {
+          type: Schema.Types.ObjectId,
+          ref: "User",
+          default: null,
+        },
+
+        action: {
+          type: String,
+          enum: ["request", "accept", "reject", "reopen", "remove"],
+          required: true,
+        },
+
+        status: {
+          type: String,
+          enum: ["pending", "confirmed", "rejected", "reopened"],
+          required: true,
+        },
+
+        reason: { type: String, default: "" }, // reject/reopen/remove reason
+        byRole: {
+          type: String,
+          enum: ["rr", "transporter", "system"],
+          default: "rr",
+        },
+        at: { type: Date, default: Date.now },
+      },
+    ],
   },
   { timestamps: true },
 );

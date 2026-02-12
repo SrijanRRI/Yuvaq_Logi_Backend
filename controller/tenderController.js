@@ -10,6 +10,19 @@ import moment from "moment-timezone";
 import { sendWhatsAppTemplate } from "../utils/sendWhatsapp.js";
 import TenderPayment from "../models/TenderPayment.js";
 
+function pushSelectionHistory(tender, entry) {
+  tender.selectionHistory = tender.selectionHistory || [];
+  tender.selectionHistory.push({
+    quotation: entry.quotation || null,
+    transporter: entry.transporter || null,
+    action: entry.action, // required
+    status: entry.status, // required
+    reason: entry.reason || "",
+    byRole: entry.byRole || "system",
+    at: entry.at || new Date(),
+  });
+}
+
 export const createTender = async (req, res) => {
   try {
     const {
@@ -638,6 +651,91 @@ export const getUpcomingTendersForTransporter = async (req, res) => {
 
 // ✅ 5. Get Quotations for a Tender
 
+// export const getTenderQuotations = async (req, res) => {
+//   try {
+//     const tenderId = req.params.id;
+//     const userId = req.user.id;
+
+//     const tender = await Tender.findById(tenderId).populate(
+//       "createdBy",
+//       "name email",
+//     );
+//     if (!tender) {
+//       return res
+//         .status(404)
+//         .json({ success: false, message: "Tender not found" });
+//     }
+
+//     if (tender.createdBy._id.toString() !== userId) {
+//       return res.status(403).json({ success: false, message: "Unauthorized" });
+//     }
+
+//     const now = new Date();
+//     if (now < tender.biddingEnd) {
+//       return res.status(403).json({
+//         success: false,
+//         message:
+//           "Top quotations can be viewed only after the bidding window closes.",
+//       });
+//     }
+
+//     const allQuotes = await Quotation.find({ tender: tenderId })
+//       .populate("transportUser", "name email")
+//       .sort({ price: 1, createdAt: 1 });
+
+//     const seen = new Set();
+//     const bestQuotes = [];
+
+//     for (const q of allQuotes) {
+//       const uid = q.transportUser._id.toString();
+//       if (!seen.has(uid)) {
+//         seen.add(uid);
+//         bestQuotes.push(q);
+//       }
+//     }
+
+//     // let quotesToReturn = [];
+//     // if (tender.reopenCount === 0) {
+//     //   quotesToReturn = bestQuotes.slice(0, 3); // L1, L2, L3
+//     // } else if (tender.reopenCount === 1) {
+//     //   quotesToReturn = bestQuotes.slice(1, 3); // L2, L3
+//     // } else if (tender.reopenCount === 2) {
+//     //   quotesToReturn = bestQuotes.slice(2, 3); // Only L3
+//     // }
+
+//     let quotesToReturn = [];
+//     if (tender.reopenCount === 0) {
+//       quotesToReturn = bestQuotes.slice(0, 3);
+//     } else if (tender.reopenCount === 1) {
+//       quotesToReturn = bestQuotes.slice(1, 3);
+//     } else if (tender.reopenCount === 2) {
+//       quotesToReturn = bestQuotes.slice(2, 3);
+//     }
+
+//     const ranked = quotesToReturn.map((q, index) => {
+//       const signedFiles = (q.files || []).map((file) => {
+//         const key = file.url?.split("/").pop();
+//         return { ...file, url: generateSignedUrl(key) };
+//       });
+
+//       return {
+//         rank: `L${bestQuotes.indexOf(q) + 1}`,
+//         transportUser: q.transportUser,
+//         price: q.price,
+//         vehicleNumber: q.vehicleNumber,
+//         createdAt: q.createdAt,
+//         files: signedFiles,
+//         _id: q._id,
+//       };
+//     });
+
+//     res.status(200).json({ success: true, data: ranked });
+//   } catch (error) {
+//     console.error("Error fetching top 3 quotations:", error);
+//     res.status(500).json({ success: false, message: error.message });
+//   }
+// };
+
 export const getTenderQuotations = async (req, res) => {
   try {
     const tenderId = req.params.id;
@@ -681,36 +779,57 @@ export const getTenderQuotations = async (req, res) => {
       }
     }
 
-    let quotesToReturn = [];
-    if (tender.reopenCount === 0) {
-      quotesToReturn = bestQuotes.slice(0, 3); // L1, L2, L3
-    } else if (tender.reopenCount === 1) {
-      quotesToReturn = bestQuotes.slice(1, 3); // L2, L3
-    } else if (tender.reopenCount === 2) {
-      quotesToReturn = bestQuotes.slice(2, 3); // Only L3
+    // ✅ ADD YOUR SNIPPET HERE (REPLACES quotesToReturn)
+
+    // always return top 3
+    const top3 = bestQuotes.slice(0, 3);
+
+    // selectionHistory => map quotationId -> reason/byRole
+    const hist = tender.selectionHistory || [];
+    const reasonByQ = {};
+    const byRoleByQ = {};
+
+    for (const h of hist) {
+      if (!h?.quotation) continue;
+      if (["reject", "reopen", "remove"].includes(h.action)) {
+        reasonByQ[String(h.quotation)] = h.reason || "";
+        byRoleByQ[String(h.quotation)] = h.byRole || "rr";
+      }
     }
 
-    const ranked = quotesToReturn.map((q, index) => {
+    const reopenCount = tender.reopenCount || 0;
+
+    const ranked = top3.map((q, index) => {
+      const qid = String(q._id);
+
       const signedFiles = (q.files || []).map((file) => {
         const key = file.url?.split("/").pop();
         return { ...file, url: generateSignedUrl(key) };
       });
 
+      // reopenCount=1 => L1 not eligible, L2 eligible, L3 eligible
+      const eligible = index >= reopenCount;
+
       return {
-        rank: `L${bestQuotes.indexOf(q) + 1}`,
+        rank: `L${index + 1}`,
         transportUser: q.transportUser,
         price: q.price,
         vehicleNumber: q.vehicleNumber,
         createdAt: q.createdAt,
         files: signedFiles,
         _id: q._id,
+
+        // ✅ NEW for UI
+        eligible,
+        removedReason: !eligible ? reasonByQ[qid] || "" : "",
+        removedBy: !eligible ? byRoleByQ[qid] || "rr" : "",
       };
     });
 
-    res.status(200).json({ success: true, data: ranked });
+    return res.status(200).json({ success: true, data: ranked });
   } catch (error) {
-    console.error("Error fetching top 3 quotations:", error);
-    res.status(500).json({ success: false, message: error.message });
+    console.error("Error fetching top quotations:", error);
+    return res.status(500).json({ success: false, message: error.message });
   }
 };
 
@@ -728,7 +847,6 @@ export const reopenTender = async (req, res) => {
     if (!tender)
       return res.status(404).json({ success: false, message: "Not found" });
 
-    // 🚫 Prevent reopening more than twice
     if (tender.reopenCount >= 2) {
       return res.status(403).json({
         success: false,
@@ -737,13 +855,43 @@ export const reopenTender = async (req, res) => {
       });
     }
 
-    // ✅ Perform reopen
+    const removedQuotationId =
+      tender.selectedQuotation || tender.selection?.quotation || null;
+
+    const removedTransporterId =
+      tender.finalTransporter || tender.selection?.transporter || null;
+
+    if (removedQuotationId) {
+      pushSelectionHistory(tender, {
+        action: "reopen",
+        status: "reopened",
+        quotation: removedQuotationId,
+        transporter: removedTransporterId,
+        reason: reason.trim(),
+        byRole: "rr",
+      });
+    }
+
+    // keep selection consistent (avoid null surprises)
+    tender.selection = {
+      status: "none",
+      quotation: null,
+      transporter: null,
+      requestedAt: null,
+      respondedAt: null,
+      response: null,
+      rejectReason: "",
+    };
+
+    // ✅ IMPORTANT: clear selection so UI can show button for next rank
+    tender.selection = null;
+
+    // reopen core fields
     tender.status = "open";
     tender.selectedQuotation = null;
     tender.finalTransporter = null;
     tender.finalPrice = null;
-    tender.reopenCount = (tender.reopenCount || 0) + 1; // ✅ increment counter
-    tender.winnerComment = `[Reopened: ${reason}]`;
+    tender.reopenCount = (tender.reopenCount || 0) + 1;
 
     await tender.save();
 
@@ -1384,6 +1532,15 @@ export const requestSelectionConfirmation = async (req, res) => {
       rejectReason: "",
     };
 
+    pushSelectionHistory(tender, {
+      action: "request",
+      status: "pending",
+      quotation: quotation._id,
+      transporter: quotation.transportUser,
+      reason: "",
+      byRole: "rr",
+    });
+
     await tender.save();
 
     // notify transporter by email (your “message goes to them”)
@@ -1483,6 +1640,17 @@ export const respondSelectionConfirmation = async (req, res) => {
       tender.selection.response = "rejected";
       tender.selection.rejectReason = String(reason || "").trim();
     }
+
+    const selQ = tender.selection?.quotation || null;
+
+    pushSelectionHistory(tender, {
+      action: action === "accept" ? "accept" : "reject",
+      status: action === "accept" ? "confirmed" : "rejected",
+      quotation: selQ,
+      transporter: req.user.id,
+      reason: action === "reject" ? tender.selection.rejectReason : "",
+      byRole: "transporter",
+    });
 
     await tender.save();
 
