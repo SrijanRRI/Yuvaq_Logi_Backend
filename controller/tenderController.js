@@ -5,9 +5,23 @@ import mongoose from "mongoose";
 import User from "../models/userSchema.js"; // Replace with your actual user model path
 import { sendMail } from "../utils/sendMail.js"; // You must have this utility created
 import userModel from "../models/userSchema.js";
-// ✅ Create Tender with bidding window + delivery window
+//  Create Tender with bidding window + delivery window
 import moment from "moment-timezone";
 import { sendWhatsAppTemplate } from "../utils/sendWhatsapp.js";
+import TenderPayment from "../models/TenderPayment.js";
+
+function pushSelectionHistory(tender, entry) {
+  tender.selectionHistory = tender.selectionHistory || [];
+  tender.selectionHistory.push({
+    quotation: entry.quotation || null,
+    transporter: entry.transporter || null,
+    action: entry.action, // required
+    status: entry.status, // required
+    reason: entry.reason || "",
+    byRole: entry.byRole || "system",
+    at: entry.at || new Date(),
+  });
+}
 
 export const createTender = async (req, res) => {
   try {
@@ -30,6 +44,9 @@ export const createTender = async (req, res) => {
       purchaseOrder,
       projectRemark,
       priceDifference, // <-- accept from frontend
+      maxBidAmount,
+      maxBidUnit,
+      minBidAmount,
     } = req.body;
 
     // basic validations
@@ -110,6 +127,39 @@ export const createTender = async (req, res) => {
       quantity: m.quantity,
     }));
 
+    // ✅ validate bid limits
+    const minAmt = Number(minBidAmount);
+    const maxAmt = Number(maxBidAmount);
+
+    if (!Number.isFinite(maxAmt) || maxAmt <= 0) {
+      return res.status(400).json({
+        success: false,
+        message: "maxBidAmount must be a valid number > 0",
+      });
+    }
+
+    if (!Number.isFinite(minAmt) || minAmt < 0) {
+      return res.status(400).json({
+        success: false,
+        message: "minBidAmount must be a valid number >= 0",
+      });
+    }
+
+    const allowedUnits = ["Per MT", "Per Tender"];
+    if (!maxBidUnit || !allowedUnits.includes(String(maxBidUnit))) {
+      return res.status(400).json({
+        success: false,
+        message: "maxBidUnit is required and must be Per MT or Per Tender",
+      });
+    }
+
+    if (minAmt > maxAmt) {
+      return res.status(400).json({
+        success: false,
+        message: "minBidAmount cannot be greater than maxBidAmount",
+      });
+    }
+
     const tenderPayload = {
       createdBy: req.user.id,
       shipmentPlan: shipmentPlanRef || null,
@@ -129,6 +179,9 @@ export const createTender = async (req, res) => {
       projectCode,
       purchaseOrder,
       projectRemark: projectRemark || "",
+      minBidAmount: minAmt,
+      maxBidAmount: maxAmt,
+      maxBidUnit: String(maxBidUnit),
     };
 
     // only set if provided so Mongoose default can apply otherwise
@@ -159,6 +212,34 @@ export const finalizeTender = async (req, res) => {
         .json({ success: false, message: "Tender not found" });
     }
 
+    if (
+      tender.selection?.status !== "confirmed" ||
+      String(tender.selection?.quotation) !== String(quotationId)
+    ) {
+      return res.status(409).json({
+        success: false,
+        message: "Transporter has not confirmed this quotation yet.",
+      });
+    }
+
+    // idempotent: if already finalized with same quotation → return success
+    if (
+      tender.status === "finalized" &&
+      String(tender.selectedQuotation) === String(quotationId)
+    ) {
+      return res.status(200).json({
+        success: true,
+        message: "Tender already finalized (idempotent)",
+        tender,
+        email: {
+          transporterEmailSent: false,
+          transporterEmailError: null,
+          rrEmailSent: false,
+          rrEmailError: null,
+        },
+      });
+    }
+
     if (tender.status === "finalized" || tender.selectedQuotation) {
       return res.status(400).json({
         success: false,
@@ -170,7 +251,24 @@ export const finalizeTender = async (req, res) => {
       return res.status(403).json({ success: false, message: "Unauthorized" });
     }
 
-    // 🔎 Find quotation
+    // Payment must be captured/paid for this tender+quotation+rrUser
+    const payRow = await TenderPayment.findOne({
+      tenderId: tender._id,
+      quotationId,
+      rrUserId: req.user.id,
+      purpose: "tender_finalization_advance",
+      status: { $in: ["paid", "captured"] },
+    });
+
+    if (!payRow) {
+      return res.status(402).json({
+        success: false,
+        message:
+          "Payment not received for this quotation. Please complete payment first.",
+      });
+    }
+
+    //  Find quotation
     const quotation = await Quotation.findOne({
       _id: quotationId,
       tender: tender._id,
@@ -189,7 +287,7 @@ export const finalizeTender = async (req, res) => {
         .json({ success: false, message: "Transport user not found" });
     }
 
-    // ✅ RR User (tender creator)
+    //  RR User (tender creator)
     const rrUser = await userModel.findById(tender.createdBy).lean();
     if (!rrUser) {
       return res
@@ -307,7 +405,6 @@ export const finalizeTender = async (req, res) => {
       );
     }
 
-  
     // 2) ✅ NEW: Email to RR User (creator) with winner contact details
     try {
       await sendMail({
@@ -553,7 +650,6 @@ export const getUpcomingTendersForTransporter = async (req, res) => {
 };
 
 // ✅ 5. Get Quotations for a Tender
-
 export const getTenderQuotations = async (req, res) => {
   try {
     const tenderId = req.params.id;
@@ -597,36 +693,57 @@ export const getTenderQuotations = async (req, res) => {
       }
     }
 
-    let quotesToReturn = [];
-    if (tender.reopenCount === 0) {
-      quotesToReturn = bestQuotes.slice(0, 3); // L1, L2, L3
-    } else if (tender.reopenCount === 1) {
-      quotesToReturn = bestQuotes.slice(1, 3); // L2, L3
-    } else if (tender.reopenCount === 2) {
-      quotesToReturn = bestQuotes.slice(2, 3); // Only L3
+    // ✅ ADD YOUR SNIPPET HERE (REPLACES quotesToReturn)
+
+    // always return top 3
+    const top3 = bestQuotes.slice(0, 3);
+
+    // selectionHistory => map quotationId -> reason/byRole
+    const hist = tender.selectionHistory || [];
+    const reasonByQ = {};
+    const byRoleByQ = {};
+
+    for (const h of hist) {
+      if (!h?.quotation) continue;
+      if (["reject", "reopen", "remove"].includes(h.action)) {
+        reasonByQ[String(h.quotation)] = h.reason || "";
+        byRoleByQ[String(h.quotation)] = h.byRole || "rr";
+      }
     }
 
-    const ranked = quotesToReturn.map((q, index) => {
+    const reopenCount = tender.reopenCount || 0;
+
+    const ranked = top3.map((q, index) => {
+      const qid = String(q._id);
+
       const signedFiles = (q.files || []).map((file) => {
         const key = file.url?.split("/").pop();
         return { ...file, url: generateSignedUrl(key) };
       });
 
+      // reopenCount=1 => L1 not eligible, L2 eligible, L3 eligible
+      const eligible = index >= reopenCount;
+
       return {
-        rank: `L${bestQuotes.indexOf(q) + 1}`,
+        rank: `L${index + 1}`,
         transportUser: q.transportUser,
         price: q.price,
         vehicleNumber: q.vehicleNumber,
         createdAt: q.createdAt,
         files: signedFiles,
         _id: q._id,
+
+        // ✅ NEW for UI
+        eligible,
+        removedReason: !eligible ? reasonByQ[qid] || "" : "",
+        removedBy: !eligible ? byRoleByQ[qid] || "rr" : "",
       };
     });
 
-    res.status(200).json({ success: true, data: ranked });
+    return res.status(200).json({ success: true, data: ranked });
   } catch (error) {
-    console.error("Error fetching top 3 quotations:", error);
-    res.status(500).json({ success: false, message: error.message });
+    console.error("Error fetching top quotations:", error);
+    return res.status(500).json({ success: false, message: error.message });
   }
 };
 
@@ -644,7 +761,6 @@ export const reopenTender = async (req, res) => {
     if (!tender)
       return res.status(404).json({ success: false, message: "Not found" });
 
-    // 🚫 Prevent reopening more than twice
     if (tender.reopenCount >= 2) {
       return res.status(403).json({
         success: false,
@@ -653,13 +769,43 @@ export const reopenTender = async (req, res) => {
       });
     }
 
-    // ✅ Perform reopen
+    const removedQuotationId =
+      tender.selectedQuotation || tender.selection?.quotation || null;
+
+    const removedTransporterId =
+      tender.finalTransporter || tender.selection?.transporter || null;
+
+    if (removedQuotationId) {
+      pushSelectionHistory(tender, {
+        action: "reopen",
+        status: "reopened",
+        quotation: removedQuotationId,
+        transporter: removedTransporterId,
+        reason: reason.trim(),
+        byRole: "rr",
+      });
+    }
+
+    // keep selection consistent (avoid null surprises)
+    tender.selection = {
+      status: "none",
+      quotation: null,
+      transporter: null,
+      requestedAt: null,
+      respondedAt: null,
+      response: null,
+      rejectReason: "",
+    };
+
+    // ✅ IMPORTANT: clear selection so UI can show button for next rank
+    tender.selection = null;
+
+    // reopen core fields
     tender.status = "open";
     tender.selectedQuotation = null;
     tender.finalTransporter = null;
     tender.finalPrice = null;
-    tender.reopenCount = (tender.reopenCount || 0) + 1; // ✅ increment counter
-    tender.winnerComment = `[Reopened: ${reason}]`;
+    tender.reopenCount = (tender.reopenCount || 0) + 1;
 
     await tender.save();
 
@@ -948,6 +1094,17 @@ export const getMyQuotationPosition = async (req, res) => {
       },
     );
 
+    // ✅ EXTRA: L1 info (anonymous, only price + time)
+    const l1Entry = sortedBestQuotes[0];
+    const l1Quote = l1Entry?.[1] || null;
+
+    const l1 = l1Quote
+      ? {
+          price: l1Quote.price,
+          createdAt: l1Quote.createdAt,
+        }
+      : null;
+
     // ✅ Find current user's rank + their best quote
     let position = null;
     let bestQuote = null;
@@ -978,6 +1135,7 @@ export const getMyQuotationPosition = async (req, res) => {
     res.status(200).json({
       position,
       bestQuotation: bestQuote,
+      l1,
     });
   } catch (error) {
     console.error("Error getting bid position:", error);
@@ -1210,6 +1368,310 @@ export const getFinalizedTransporterContact = async (req, res) => {
     });
   } catch (error) {
     console.error("getFinalizedTransporterContact error:", error);
+    return res.status(500).json({ success: false, message: error.message });
+  }
+};
+
+export const requestSelectionConfirmation = async (req, res) => {
+  try {
+    const tenderId = req.params.id;
+    const { quotationId } = req.body;
+
+    if (
+      !mongoose.isValidObjectId(tenderId) ||
+      !mongoose.isValidObjectId(quotationId)
+    ) {
+      return res
+        .status(400)
+        .json({ success: false, message: "Invalid tenderId/quotationId" });
+    }
+
+    const tender = await Tender.findById(tenderId);
+    if (!tender)
+      return res
+        .status(404)
+        .json({ success: false, message: "Tender not found" });
+
+    // only creator can request
+    if (String(tender.createdBy) !== String(req.user.id)) {
+      return res.status(403).json({ success: false, message: "Unauthorized" });
+    }
+
+    if (tender.status === "finalized") {
+      return res
+        .status(400)
+        .json({ success: false, message: "Tender already finalized" });
+    }
+
+    // block if already pending/confirmed
+    if (tender.selection?.status === "pending") {
+      return res.status(409).json({
+        success: false,
+        message: "A transporter confirmation is already pending.",
+      });
+    }
+    if (tender.selection?.status === "confirmed") {
+      return res.status(409).json({
+        success: false,
+        message: "Selection already confirmed. Proceed to payment.",
+      });
+    }
+
+    // optional: allow only after bidding end
+    const now = new Date();
+    if (tender.biddingEnd && now < new Date(tender.biddingEnd)) {
+      return res.status(403).json({
+        success: false,
+        message: "You can request confirmation only after bidding ends.",
+      });
+    }
+
+    const quotation = await Quotation.findOne({
+      _id: quotationId,
+      tender: tender._id,
+    });
+    if (!quotation)
+      return res
+        .status(400)
+        .json({ success: false, message: "Invalid quotation for this tender" });
+
+    // set selection pending
+    tender.selection = {
+      status: "pending",
+      quotation: quotation._id,
+      transporter: quotation.transportUser,
+      requestedAt: new Date(),
+      respondedAt: null,
+      response: null,
+      rejectReason: "",
+    };
+
+    pushSelectionHistory(tender, {
+      action: "request",
+      status: "pending",
+      quotation: quotation._id,
+      transporter: quotation.transportUser,
+      reason: "",
+      byRole: "rr",
+    });
+
+    await tender.save();
+
+    // notify transporter by email (your “message goes to them”)
+    try {
+      const transporter = await userModel
+        .findById(quotation.transportUser)
+        .lean();
+      if (transporter?.email) {
+        await sendMail({
+          to: transporter.email,
+          subject: "Your Quotation is Selected — Please Confirm (LogiQ)",
+          html: `
+            <div style="font-family:Arial;line-height:1.5">
+              <h2 style="margin:0 0 10px;color:#059669">LogiQ</h2>
+              <p>Hello <b>${transporter.name || "Transporter"}</b>,</p>
+              <p>Your quotation has been selected for the tender below. Please open your Transporter Dashboard and <b>Accept/Reject</b>.</p>
+              <table cellpadding="6" style="border:1px solid #e5e7eb;border-radius:8px">
+                <tr><td><b>Project</b></td><td>${tender.projectName || "-"}</td></tr>
+                <tr><td><b>Dispatch</b></td><td>${tender.dispatchLocation || "-"}</td></tr>
+                <tr><td><b>Delivery</b></td><td>${
+                  tender.deliveryWindow?.from && tender.deliveryWindow?.to
+                    ? `${moment(tender.deliveryWindow.from).tz("Asia/Kolkata").format("DD MMM YYYY")} → ${moment(tender.deliveryWindow.to).tz("Asia/Kolkata").format("DD MMM YYYY")}`
+                    : "-"
+                }</td></tr>
+                <tr><td><b>Your Price</b></td><td>₹${Number(quotation.price).toLocaleString("en-IN")} / MT</td></tr>
+              </table>
+              <p style="margin-top:12px;color:#6b7280">If you do not respond, RR user cannot proceed to payment & finalization.</p>
+            </div>
+          `,
+        });
+      }
+    } catch (e) {
+      // non-blocking
+      console.error("Selection email failed:", e?.message);
+    }
+
+    return res
+      .status(200)
+      .json({ success: true, message: "Confirmation requested", data: tender });
+  } catch (error) {
+    console.error("requestSelectionConfirmation:", error);
+    return res.status(500).json({ success: false, message: error.message });
+  }
+};
+
+export const respondSelectionConfirmation = async (req, res) => {
+  try {
+    const tenderId = req.params.id;
+    const { action, reason } = req.body; // action: 'accept' | 'reject'
+
+    if (!mongoose.isValidObjectId(tenderId)) {
+      return res
+        .status(400)
+        .json({ success: false, message: "Invalid tenderId" });
+    }
+
+    const tender = await Tender.findById(tenderId);
+    if (!tender)
+      return res
+        .status(404)
+        .json({ success: false, message: "Tender not found" });
+
+    if (tender.selection?.status !== "pending") {
+      return res.status(409).json({
+        success: false,
+        message: "No pending confirmation for this tender.",
+      });
+    }
+
+    if (String(tender.selection.transporter) !== String(req.user.id)) {
+      return res.status(403).json({
+        success: false,
+        message: "Unauthorized: not selected transporter",
+      });
+    }
+
+    if (!["accept", "reject"].includes(action)) {
+      return res
+        .status(400)
+        .json({ success: false, message: "action must be accept/reject" });
+    }
+
+    if (action === "reject" && !String(reason || "").trim()) {
+      return res
+        .status(400)
+        .json({ success: false, message: "Reject reason is required" });
+    }
+
+    tender.selection.respondedAt = new Date();
+
+    if (action === "accept") {
+      tender.selection.status = "confirmed";
+      tender.selection.response = "accepted";
+      tender.selection.rejectReason = "";
+    } else {
+      tender.selection.status = "rejected";
+      tender.selection.response = "rejected";
+      tender.selection.rejectReason = String(reason || "").trim();
+    }
+
+    const selQ = tender.selection?.quotation || null;
+
+    pushSelectionHistory(tender, {
+      action: action === "accept" ? "accept" : "reject",
+      status: action === "accept" ? "confirmed" : "rejected",
+      quotation: selQ,
+      transporter: req.user.id,
+      reason: action === "reject" ? tender.selection.rejectReason : "",
+      byRole: "transporter",
+    });
+
+    await tender.save();
+
+    // notify RR user (optional but useful)
+    try {
+      const rrUser = await userModel.findById(tender.createdBy).lean();
+      if (rrUser?.email) {
+        await sendMail({
+          to: rrUser.email,
+          subject:
+            action === "accept"
+              ? "✅ Transporter Confirmed — You Can Proceed to Payment (LogiQ)"
+              : "❌ Transporter Rejected — Please Select Next Quote (LogiQ)",
+          html: `
+            <div style="font-family:Arial;line-height:1.5">
+              <h2 style="margin:0 0 10px;color:#059669">LogiQ</h2>
+              <p>Hello <b>${rrUser.name || "RR User"}</b>,</p>
+              <p>Selected transporter has <b>${action === "accept" ? "ACCEPTED" : "REJECTED"}</b> the confirmation request.</p>
+              ${action === "reject" ? `<p><b>Reason:</b> ${tender.selection.rejectReason}</p>` : ""}
+              <p><b>Project:</b> ${tender.projectName || "-"}</p>
+            </div>
+          `,
+        });
+      }
+    } catch (e) {
+      console.error("RR notify mail failed:", e?.message);
+    }
+
+    return res
+      .status(200)
+      .json({ success: true, message: "Response recorded", data: tender });
+  } catch (error) {
+    console.error("respondSelectionConfirmation:", error);
+    return res.status(500).json({ success: false, message: error.message });
+  }
+};
+
+export const getPendingConfirmationsForTransporter = async (req, res) => {
+  try {
+    const transporterId = req.user.id;
+
+    const tenders = await Tender.find({
+      "selection.status": "pending",
+      "selection.transporter": transporterId,
+    })
+      .sort({ "selection.requestedAt": -1 })
+      .select(
+        [
+          "projectName",
+          "projectCode",
+          "projectRemark", //  remark
+          "dispatchLocation", //  location
+          "address",
+          "pincode",
+          "closeDate", //  close date
+          "deliveryWindow",
+          "materials", //  material list
+          "status",
+          "selection", // contains quotation + requestedAt + etc
+          "createdBy", //  who sent (RR user)
+        ].join(" "),
+      )
+      .populate({
+        path: "createdBy",
+        select: "name email phone", // show RR sender identity
+      })
+      .populate({
+        path: "selection.quotation",
+        select: "price vehicleNumber rank createdAt files", // helpful context for transporter
+      })
+      .lean();
+
+    // Optional: if you store selection.requestedBy in DB, prefer that instead of createdBy:
+    // const requestedBy = t.selection?.requestedBy || t.createdBy
+
+    const data = tenders.map((t) => ({
+      _id: t._id,
+
+      // project/tender details
+      // projectName: t.projectName,
+      // projectCode: t.projectCode,
+      // projectRemark: t.projectRemark || "",
+      dispatchLocation: t.dispatchLocation,
+      address: t.address,
+      pincode: t.pincode,
+      closeDate: t.closeDate,
+      deliveryWindow: t.deliveryWindow,
+      materials: t.materials || [],
+
+      status: t.status,
+
+      // selection meta
+      selection: {
+        status: t.selection?.status,
+        requestedAt: t.selection?.requestedAt,
+        transporter: t.selection?.transporter,
+      },
+
+      // selected quotation details (what transporter is confirming)
+      quotation: t.selection?.quotation || null,
+
+      // who sent the request (RR)
+      requestedBy: t.createdBy || null,
+    }));
+
+    return res.status(200).json({ success: true, data });
+  } catch (error) {
     return res.status(500).json({ success: false, message: error.message });
   }
 };

@@ -13,14 +13,13 @@ import {
   getQuotationHistoryForTransporter,
   notifyTenderTransporters,
   getFinalizedTransporterContact,
+  requestSelectionConfirmation,
+  respondSelectionConfirmation,
+  getPendingConfirmationsForTransporter,
   // getAllFinalizedTendersWithQuotations
 } from "../controller/tenderController.js";
 
-import {
-  createFinalizeOrder,
-  verifyFinalizePayment,
-} from "../controller/paymentController.js";
-
+import { createFinalizeOrder, verifyFinalizePayment } from "../controller/tenderPaymentController.js";
 import { jwtAuth } from "../middleware/jwtAuth.js";
 
 const router = express.Router();
@@ -64,5 +63,14 @@ router.post("/:id/notify", notifyTenderTransporters);
 router.post("/:id/finalize/payment/order", jwtAuth, createFinalizeOrder);
 
 router.post("/:id/finalize/payment/verify", jwtAuth, verifyFinalizePayment);
+
+// RR user asks transporter to confirm
+router.post("/:id/selection/request", jwtAuth, requestSelectionConfirmation);
+
+// Transporter accepts/rejects
+router.post("/:id/selection/respond", jwtAuth, respondSelectionConfirmation);
+
+// Transporter can list pending confirmations
+router.get("/transporter/pending-confirmations", jwtAuth, getPendingConfirmationsForTransporter);
 
 export default router;
