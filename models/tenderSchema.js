@@ -180,8 +180,35 @@ const tenderSchema = new mongoose.Schema(
         at: { type: Date, default: Date.now },
       },
     ],
+
+    postBid: {
+      enabled: { type: Boolean, default: false },
+      status: {
+        type: String,
+        enum: ["inactive", "active", "ended"],
+        default: "inactive",
+      },
+
+      // RR user entered range
+      rangeMin: { type: Number, default: null },
+      rangeMax: { type: Number, default: null },
+
+      // timing (endsAt MUST be biddingEnd + 10 min)
+      startedAt: { type: Date, default: null },
+      endsAt: { type: Date, default: null },
+
+      // freeze eligible top3 at the moment RR starts post-bid
+      eligibleTransporters: [
+        { type: mongoose.Schema.Types.ObjectId, ref: "User" },
+      ],
+
+      notifiedAt: { type: Date, default: null },
+    },
   },
   { timestamps: true },
 );
+
+tenderSchema.index({ "postBid.status": 1, "postBid.endsAt": 1 });
+tenderSchema.index({ biddingEnd: 1 });
 
 export default mongoose.model("Tender", tenderSchema);
