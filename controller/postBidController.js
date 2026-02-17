@@ -328,6 +328,7 @@ export const getActivePostBidForTransporter = async (req, res) => {
       projectName: t.projectName,
       projectCode: t.projectCode,
       dispatchLocation: t.dispatchLocation,
+      address: t.address,
       pincode: t.pincode,
       endsAt: t.postBid?.endsAt,
       remainingMs: new Date(t.postBid?.endsAt).getTime() - now.getTime(),
