@@ -22,6 +22,8 @@ import {
 import { createFinalizeOrder, verifyFinalizePayment } from "../controller/tenderPaymentController.js";
 import { jwtAuth } from "../middleware/jwtAuth.js";
 
+import { getActivePostBidForTransporter, startPostBidNegotiation } from "../controller/postBidController.js";
+
 const router = express.Router();
 
 // ✅ 1. Create a new tender (RR user)
@@ -72,5 +74,12 @@ router.post("/:id/selection/respond", jwtAuth, respondSelectionConfirmation);
 
 // Transporter can list pending confirmations
 router.get("/transporter/pending-confirmations", jwtAuth, getPendingConfirmationsForTransporter);
+
+
+// Post Bid Negotiation : 
+router.post("/:id/post-bid/start", jwtAuth, startPostBidNegotiation);
+
+// transporter dashboard: list active post-bids for me
+router.get("/transporter/post-bid-active", jwtAuth, getActivePostBidForTransporter);
 
 export default router;

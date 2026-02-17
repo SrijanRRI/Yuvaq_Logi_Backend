@@ -678,27 +678,101 @@ export const getTenderQuotations = async (req, res) => {
       });
     }
 
+    // -----------------------------
+    // 1) Load ALL quotes for tender
+    // -----------------------------
     const allQuotes = await Quotation.find({ tender: tenderId })
       .populate("transportUser", "name email")
       .sort({ price: 1, createdAt: 1 });
 
-    const seen = new Set();
-    const bestQuotes = [];
+    // ---------------------------------------------
+    // 2) Determine post-bid window (startsAt/endsAt)
+    // ---------------------------------------------
+    const postBidStatus = String(
+      tender.postBid?.status || "inactive",
+    ).toLowerCase(); // inactive|active|ended
+    const endsAt = tender.postBid?.endsAt
+      ? new Date(tender.postBid.endsAt)
+      : null;
 
-    for (const q of allQuotes) {
-      const uid = q.transportUser._id.toString();
-      if (!seen.has(uid)) {
-        seen.add(uid);
-        bestQuotes.push(q);
-      }
+    // if you store durationMinutes in tender.postBid, use it; else default 10
+    const durationMinutes = Number(tender.postBid?.durationMinutes ?? 10);
+
+    // prefer saved startsAt/startedAt if present, else derive from endsAt-duration
+    const startsAt =
+      (tender.postBid?.startsAt && new Date(tender.postBid.startsAt)) ||
+      (tender.postBid?.startedAt && new Date(tender.postBid.startedAt)) ||
+      (endsAt
+        ? new Date(endsAt.getTime() - durationMinutes * 60 * 1000)
+        : null);
+
+    const hasPostBidWindow =
+      !!endsAt && !!startsAt && ["active", "ended"].includes(postBidStatus);
+
+    // ---------------------------------------------
+    // 3) Identify post-bid quotes (flag OR time-window)
+    // ---------------------------------------------
+    const isMarkedPostBid = (q) => {
+      // covers common schema variants; if fields don't exist, it just evaluates false
+      return (
+        q?.isPostBid === true ||
+        q?.postBid === true ||
+        String(q?.bidPhase || "").toLowerCase() === "postbid" ||
+        String(q?.bidPhase || "").toLowerCase() === "post_bid" ||
+        String(q?.phase || "").toLowerCase() === "postbid" ||
+        String(q?.phase || "").toLowerCase() === "post_bid"
+      );
+    };
+
+    // first try "flag-based"
+    let postBidPool = allQuotes.filter(isMarkedPostBid);
+
+    // if no flag-based quotes, fallback to time-window based (if window exists)
+    if (postBidPool.length === 0 && hasPostBidWindow) {
+      postBidPool = allQuotes.filter((q) => {
+        const t = new Date(q.createdAt).getTime();
+        return t >= startsAt.getTime() && t <= endsAt.getTime();
+      });
     }
 
-    // ✅ ADD YOUR SNIPPET HERE (REPLACES quotesToReturn)
+    // normal pool should represent "previous ranked quotes" (pre post-bid)
+    // If post-bid exists -> exclude postBidPool, else normal = allQuotes
+    const postBidIds = new Set(postBidPool.map((q) => String(q._id)));
+    const normalPool =
+      postBidPool.length > 0
+        ? allQuotes.filter((q) => !postBidIds.has(String(q._id)))
+        : allQuotes;
 
-    // always return top 3
-    const top3 = bestQuotes.slice(0, 3);
+    // ---------------------------------------------
+    // 4) Helper: best quote per transporter (dedupe)
+    // ---------------------------------------------
+    const bestPerTransporter = (quotes) => {
+      const seen = new Set();
+      const best = [];
+      for (const q of quotes) {
+        const uid = q?.transportUser?._id
+          ? String(q.transportUser._id)
+          : String(q.transportUser);
+        if (!uid) continue;
+        if (!seen.has(uid)) {
+          seen.add(uid);
+          best.push(q);
+        }
+      }
+      return best;
+    };
 
-    // selectionHistory => map quotationId -> reason/byRole
+    // "previous ranked quotations" = best per transporter from NORMAL pool
+    const bestNormalQuotes = bestPerTransporter(normalPool).sort((a, b) => {
+      const ap = a.price ?? Infinity;
+      const bp = b.price ?? Infinity;
+      if (ap !== bp) return ap - bp;
+      return new Date(a.createdAt).getTime() - new Date(b.createdAt).getTime();
+    });
+
+    const top3Normal = bestNormalQuotes.slice(0, 3);
+
+    // selectionHistory map
     const hist = tender.selectionHistory || [];
     const reasonByQ = {};
     const byRoleByQ = {};
@@ -713,7 +787,8 @@ export const getTenderQuotations = async (req, res) => {
 
     const reopenCount = tender.reopenCount || 0;
 
-    const ranked = top3.map((q, index) => {
+    // normal ranks: L1 L2 L3
+    const rankedNormalTop3 = top3Normal.map((q, index) => {
       const qid = String(q._id);
 
       const signedFiles = (q.files || []).map((file) => {
@@ -721,7 +796,6 @@ export const getTenderQuotations = async (req, res) => {
         return { ...file, url: generateSignedUrl(key) };
       });
 
-      // reopenCount=1 => L1 not eligible, L2 eligible, L3 eligible
       const eligible = index >= reopenCount;
 
       return {
@@ -733,14 +807,77 @@ export const getTenderQuotations = async (req, res) => {
         files: signedFiles,
         _id: q._id,
 
-        // ✅ NEW for UI
         eligible,
         removedReason: !eligible ? reasonByQ[qid] || "" : "",
         removedBy: !eligible ? byRoleByQ[qid] || "rr" : "",
+        isPostBid: false,
       };
     });
 
-    return res.status(200).json({ success: true, data: ranked });
+    // ---------------------------------------------
+    // 5) Post-bid ranked quotes (best per transporter)
+    // ---------------------------------------------
+    const bestPostBidQuotes = bestPerTransporter(postBidPool).sort((a, b) => {
+      const ap = a.price ?? Infinity;
+      const bp = b.price ?? Infinity;
+      if (ap !== bp) return ap - bp;
+      return new Date(a.createdAt).getTime() - new Date(b.createdAt).getTime();
+    });
+
+    const postBidRanked = bestPostBidQuotes.map((q, index) => {
+      const signedFiles = (q.files || []).map((file) => {
+        const key = file.url?.split("/").pop();
+        return { ...file, url: generateSignedUrl(key) };
+      });
+
+      return {
+        // keep distinct rank so UI doesn’t confuse with normal L1/L2/L3
+        rank: `PB${index + 1}`,
+        transportUser: q.transportUser,
+        price: q.price,
+        vehicleNumber: q.vehicleNumber,
+        createdAt: q.createdAt,
+        files: signedFiles,
+        _id: q._id,
+        eligible: true,
+        removedReason: "",
+        removedBy: "",
+        isPostBid: true,
+      };
+    });
+
+    const postBidRankedOrEmpty = Array.isArray(postBidRanked)
+      ? postBidRanked
+      : [];
+
+    // combined: if post-bid exists show it along with previous ranked
+    const combinedForUI =
+      postBidRankedOrEmpty.length > 0
+        ? [...postBidRankedOrEmpty, ...rankedNormalTop3]
+        : rankedNormalTop3;
+
+    return res.status(200).json({
+      success: true,
+      data: {
+        postBid: {
+          enabled: tender.postBid?.enabled || false,
+          status: tender.postBid?.status || "inactive",
+          endsAt: tender.postBid?.endsAt || null,
+          remainingMs: tender.postBid?.endsAt
+            ? Math.max(
+                0,
+                new Date(tender.postBid.endsAt).getTime() - Date.now(),
+              )
+            : 0,
+          quotes: postBidRankedOrEmpty,
+          message: postBidRankedOrEmpty.length
+            ? null
+            : "No quotations in the post bid.",
+        },
+        normal: rankedNormalTop3,
+        combinedForUI,
+      },
+    });
   } catch (error) {
     console.error("Error fetching top quotations:", error);
     return res.status(500).json({ success: false, message: error.message });
@@ -1069,7 +1206,10 @@ export const getMyQuotationPosition = async (req, res) => {
     }
 
     // ✅ Get all quotations for the tender, sorted by price + createdAt
-    const allQuotes = await Quotation.find({ tender: tenderId }).sort({
+    const allQuotes = await Quotation.find({
+      tender: tenderId,
+      phase: "normal",
+    }).sort({
       price: 1,
       createdAt: 1,
     });
@@ -1415,6 +1555,18 @@ export const requestSelectionConfirmation = async (req, res) => {
         success: false,
         message: "Selection already confirmed. Proceed to payment.",
       });
+    }
+
+    if (tender.postBid?.status === "active" && tender.postBid?.endsAt) {
+      const now = new Date();
+      if (now < new Date(tender.postBid.endsAt)) {
+        return res.status(409).json({
+          success: false,
+          message:
+            "Post-bid negotiation is active. Please wait until it ends to select.",
+          endsAt: tender.postBid.endsAt,
+        });
+      }
     }
 
     // optional: allow only after bidding end

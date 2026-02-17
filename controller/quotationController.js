@@ -44,7 +44,9 @@ export const submitQuotation = async (req, res) => {
     const bidCount = await Quotation.countDocuments({
       tender: tenderId,
       transportUser: userId,
+      phase: "normal",
     });
+
     if (bidCount >= 3) {
       return res.status(403).json({
         success: false,
@@ -53,7 +55,7 @@ export const submitQuotation = async (req, res) => {
     }
 
     // 3) Compute current L1 (lowest among each transporter's best price)
-    const allQuotes = await Quotation.find({ tender: tenderId }).sort({
+    const allQuotes = await Quotation.find({ tender: tenderId, phase: "normal" }).sort({
       price: 1,
       createdAt: 1,
     });
@@ -68,7 +70,7 @@ export const submitQuotation = async (req, res) => {
 
     let L1 = null;
     for (const [, q] of bestQuotesMap.entries()) {
-      if (!L1 || q.price < L1.price || (q.price === L1.price && q.createdAt < q.createdAt)) {
+      if (!L1 || q.price < L1.price || (q.price === L1.price && q.createdAt < L1.createdAt)) {
         L1 = q;
       }
     }
