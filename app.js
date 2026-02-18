@@ -2,6 +2,7 @@ import express from 'express'
 import dotenv from 'dotenv';
 dotenv.config();
 import authRouter from './routes/userRouter.js';
+import subscriptionRouter from "./routes/subscriptionRouter.js";
 import adminRouter from './routes/adminRouter.js';
 import quotationRouter from './routes/quotationRouter.js';
 import shipmentRouter from './routes/shipmentPlanningRouter.js';
@@ -29,7 +30,9 @@ app.use(express.json({
 
 app.use(express.urlencoded({ extended: true }));
 app.use(cookieParser()); // Third-party middleware
+
 app.use('/api/auth',authRouter)
+app.use("/subscriptions", subscriptionRouter);
 app.use('/admin', adminRouter);
 app.use('/tenders',tenderRouter)
 app.use('/quotation', quotationRouter);
