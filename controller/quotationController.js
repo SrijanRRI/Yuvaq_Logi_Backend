@@ -5,7 +5,15 @@ import { generateSignedUrl } from "../utils/minioClient.js";
 
 export const submitQuotation = async (req, res) => {
   try {
-    const { price, vehicleNumber } = req.body;
+    const { price } = req.body;
+
+    // ✅ vehicleNumber optional now
+    const vehicleNumber =
+      typeof req.body.vehicleNumber === "string" &&
+      req.body.vehicleNumber.trim()
+        ? req.body.vehicleNumber.trim()
+        : undefined;
+
     const userId = req.user.id;
     const tenderId = req.params.id;
 
@@ -36,26 +44,36 @@ export const submitQuotation = async (req, res) => {
     }
 
     // 🔹 Use tender.priceDifference (fallback to 30 if missing/invalid)
-    const minDelta = Number.isFinite(Number(tender.priceDifference)) && Number(tender.priceDifference) >= 0
-      ? Number(tender.priceDifference)
-      : 30;
+    const minDelta =
+      Number.isFinite(Number(tender.priceDifference)) &&
+      Number(tender.priceDifference) >= 0
+        ? Number(tender.priceDifference)
+        : 30;
 
+    // =========================================================
+    // ✅ UNLIMITED BIDDING ENABLED (3-bid restriction removed)
+    // Previously:
     // 2) Enforce 3-bid limit per user for this tender
-    const bidCount = await Quotation.countDocuments({
-      tender: tenderId,
-      transportUser: userId,
-      phase: "normal",
-    });
-
-    if (bidCount >= 3) {
-      return res.status(403).json({
-        success: false,
-        message: "You have reached the maximum of 3 bids for this tender",
-      });
-    }
+    //
+    // const bidCount = await Quotation.countDocuments({
+    //   tender: tenderId,
+    //   transportUser: userId,
+    //   phase: "normal",
+    // });
+    //
+    // if (bidCount >= 3) {
+    //   return res.status(403).json({
+    //     success: false,
+    //     message: "You have reached the maximum of 3 bids for this tender",
+    //   });
+    // }
+    // =========================================================
 
     // 3) Compute current L1 (lowest among each transporter's best price)
-    const allQuotes = await Quotation.find({ tender: tenderId, phase: "normal" }).sort({
+    const allQuotes = await Quotation.find({
+      tender: tenderId,
+      phase: "normal",
+    }).sort({
       price: 1,
       createdAt: 1,
     });
@@ -70,7 +88,11 @@ export const submitQuotation = async (req, res) => {
 
     let L1 = null;
     for (const [, q] of bestQuotesMap.entries()) {
-      if (!L1 || q.price < L1.price || (q.price === L1.price && q.createdAt < L1.createdAt)) {
+      if (
+        !L1 ||
+        q.price < L1.price ||
+        (q.price === L1.price && q.createdAt < L1.createdAt)
+      ) {
         L1 = q;
       }
     }
@@ -125,6 +147,7 @@ export const submitQuotation = async (req, res) => {
       tender: tender._id,
       transportUser: userId,
       price: numericPrice,
+      // ✅ will be undefined if not provided (allowed now)
       vehicleNumber,
       files: uploadedFiles,
     });
@@ -136,7 +159,7 @@ export const submitQuotation = async (req, res) => {
 
     return res.status(201).json({
       success: true,
-      message: `Quotation ${bidCount + 1}/3 submitted successfully.`,
+      message: "Quotation submitted successfully.",
       data: {
         quotation,
         validationSnapshot: L1
@@ -162,7 +185,6 @@ export const submitQuotation = async (req, res) => {
   }
 };
 
-
 //get all quotations for a tender
 
 export const getMyQuotationsForTender = async (req, res) => {
@@ -171,7 +193,9 @@ export const getMyQuotationsForTender = async (req, res) => {
     const transportUserId = req.user.id;
 
     if (!tenderId) {
-      return res.status(400).json({ success: false, message: "Tender ID is required" });
+      return res
+        .status(400)
+        .json({ success: false, message: "Tender ID is required" });
     }
 
     // Get all quotations submitted by this transporter for this tender
@@ -205,5 +229,3 @@ export const getMyQuotationsForTender = async (req, res) => {
     res.status(500).json({ success: false, message: error.message });
   }
 };
-
-

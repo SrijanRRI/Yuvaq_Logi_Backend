@@ -29,7 +29,7 @@ const quotationSchema = new mongoose.Schema({
     index: true,
   },
 
-  vehicleNumber: { type: String, required: true },
+  vehicleNumber: { type: String, required: false },
 
   files: [fileSchema], // Array of file metadata
 
