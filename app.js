@@ -7,6 +7,7 @@ import adminRouter from './routes/adminRouter.js';
 import quotationRouter from './routes/quotationRouter.js';
 import shipmentRouter from './routes/shipmentPlanningRouter.js';
 import webhookRouter from "./routes/webhookRouter.js";
+import vehicleCatalogRouter from "./routes/vehicleCatalogRouter.js"
 import "./cron/autoCloseTenders.js";
 import tenderRouter from './routes/tenderRouter.js';
 import connectToDb from './config/dbConn.js';
@@ -38,5 +39,7 @@ app.use('/tenders',tenderRouter)
 app.use('/quotation', quotationRouter);
 app.use('/shipment-planning',shipmentRouter)
 app.use("/webhooks", webhookRouter);
+
+app.use("/vehicle", vehicleCatalogRouter);
 
 export default app;
