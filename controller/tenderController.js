@@ -1196,18 +1196,26 @@ export const getQuotationHistoryForTransporter = async (req, res) => {
       result.push({
         tenderId: tender._id,
         tender: {
-          dispatchLocation: tender.dispatchLocation,
-          address: tender.address,
+          // ✅ NEW: pickup/drop instead of dispatchLocation/address
+          pickup: tender.pickup || null,
+          drop: tender.drop || null,
+
+          // ✅ NEW: vehicleRequirements instead of materials
+          vehicleRequirements: Array.isArray(tender.vehicleRequirements)
+            ? tender.vehicleRequirements
+            : [],
+
           deliveryWindow: tender.deliveryWindow || { from: null, to: null },
           closeDate: tender.closeDate,
           status: tender.status,
           remarks: tender.remarks,
-          materials: tender.materials || [],
+
           totalWeight: tender.totalWeight,
           totalQuantity: tender.totalQuantity,
           createdBy: tender.createdBy || null,
-          maxBidAmount: tender.maxBidAmount,
-          maxBidUnit: tender.maxBidUnit || null,
+          // minBidAmount : tender.minBidAmount,
+          // maxBidAmount: tender.maxBidAmount,
+          // maxBidUnit: tender.maxBidUnit || null,
           finalizedStatus: isSelected
             ? "Your quotation was finalized"
             : "Your quotation was not selected",
@@ -1894,12 +1902,11 @@ export const getPendingConfirmationsForTransporter = async (req, res) => {
           "projectName",
           "projectCode",
           "projectRemark", //  remark
-          "dispatchLocation", //  location
-          "address",
-          "pincode",
+          "pickup",
+          "drop",
           "closeDate", //  close date
           "deliveryWindow",
-          "materials", //  material list
+          "vehicleRequirements",
           "status",
           "selection", // contains quotation + requestedAt + etc
           "createdBy", //  who sent (RR user)
@@ -1925,12 +1932,18 @@ export const getPendingConfirmationsForTransporter = async (req, res) => {
       // projectName: t.projectName,
       // projectCode: t.projectCode,
       // projectRemark: t.projectRemark || "",
-      dispatchLocation: t.dispatchLocation,
-      address: t.address,
-      pincode: t.pincode,
+
+      // ✅ NEW: pickup/drop instead of dispatchLocation/address/pincode
+      pickup: t.pickup || null,
+      drop: t.drop || null,
+
       closeDate: t.closeDate,
       deliveryWindow: t.deliveryWindow,
-      materials: t.materials || [],
+
+      // ✅ NEW: vehicleRequirements instead of materials
+      vehicleRequirements: Array.isArray(t.vehicleRequirements)
+        ? t.vehicleRequirements
+        : [],
 
       status: t.status,
 

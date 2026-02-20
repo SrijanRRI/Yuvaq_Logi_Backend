@@ -186,11 +186,11 @@ export const submitPostBidQuotation = async (req, res) => {
       return res.status(400).json({ success: false, message: "Invalid price" });
     }
 
-    if (!vehicleNumber || !String(vehicleNumber).trim()) {
-      return res
-        .status(400)
-        .json({ success: false, message: "Vehicle number is required" });
-    }
+    // if (!vehicleNumber || !String(vehicleNumber).trim()) {
+    //   return res
+    //     .status(400)
+    //     .json({ success: false, message: "Vehicle number is required" });
+    // }
 
     const tender = await Tender.findById(tenderId).lean();
     if (!tender)
@@ -318,18 +318,28 @@ export const getActivePostBidForTransporter = async (req, res) => {
       "postBid.eligibleTransporters": userId,
     })
       .select(
-        "dispatchLocation address pincode biddingEnd postBid deliveryWindow materials projectName projectCode",
+        "pickup drop vehicleRequirements totalWeight totalQuantity biddingEnd postBid deliveryWindow ",
       )
       .sort({ "postBid.endsAt": 1 })
       .lean();
 
     const data = tenders.map((t) => ({
       tenderId: t._id,
-      projectName: t.projectName,
-      projectCode: t.projectCode,
-      dispatchLocation: t.dispatchLocation,
-      address: t.address,
-      pincode: t.pincode,
+      // ✅ NEW: pickup/drop instead of dispatchLocation/address/pincode
+      pickup: t.pickup || null,
+      drop: t.drop || null,
+
+      // ✅ NEW: vehicle requirements instead of materials
+      vehicleRequirements: Array.isArray(t.vehicleRequirements)
+        ? t.vehicleRequirements
+        : [],
+
+      totalWeight: t.totalWeight,
+      totalQuantity: t.totalQuantity,
+
+      // keep useful tender/postbid timing info
+      biddingEnd: t.biddingEnd,
+
       endsAt: t.postBid?.endsAt,
       remainingMs: new Date(t.postBid?.endsAt).getTime() - now.getTime(),
       rangeMin: t.postBid?.rangeMin,

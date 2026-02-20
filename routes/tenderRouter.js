@@ -76,7 +76,6 @@ router.post("/:id/selection/respond", jwtAuth, subscriptionGate, respondSelectio
 // Transporter can list pending confirmations
 router.get("/transporter/pending-confirmations", jwtAuth, subscriptionGate, getPendingConfirmationsForTransporter);
 
-
 // Post Bid Negotiation : 
 router.post("/:id/post-bid/start", jwtAuth, subscriptionGate, startPostBidNegotiation);
 
