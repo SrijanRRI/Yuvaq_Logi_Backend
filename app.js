@@ -10,14 +10,14 @@ import webhookRouter from "./routes/webhookRouter.js";
 import vehicleCatalogRouter from "./routes/vehicleCatalogRouter.js"
 import "./cron/autoCloseTenders.js";
 import tenderRouter from './routes/tenderRouter.js';
-import connectToDb from './config/dbConn.js';
+// import connectToDb from './config/dbConn.js';
 import cookieParser from 'cookie-parser'
 import cors from 'cors';
 import autoEndPostBid from './cron/autoEndPostBid.js';
 
 const app = express();
 
-connectToDb()
+// connectToDb()
 
 autoEndPostBid();
 
@@ -41,5 +41,10 @@ app.use('/shipment-planning',shipmentRouter)
 app.use("/webhooks", webhookRouter);
 
 app.use("/vehicle", vehicleCatalogRouter);
+
+// ✅ HEALTH CHECK (helps debug instantly)
+app.get("/health", (req, res) => {
+  res.json({ ok: true, time: new Date().toISOString() });
+});
 
 export default app;

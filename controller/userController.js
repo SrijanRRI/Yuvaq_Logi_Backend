@@ -189,7 +189,7 @@ export const logout = async (req, res, next) => {
       message: "Logged Out",
     });
   } catch (error) {
-    res.stats(400).json({
+    res.status(400).json({
       success: false,
       message: error.message,
     });
@@ -361,7 +361,19 @@ export const getCurrentUser = async (req, res) => {
         .status(404)
         .json({ success: false, message: "User not found" });
 
-    res.status(200).json({ success: true, data: user, role: user.role });
+    const sub = user.subscription || { status: "none" };
+    const subscriptionActive =
+      sub.status === "active" &&
+      sub.endsAt &&
+      new Date(sub.endsAt) > new Date();
+
+    return res.status(200).json({
+      success: true,
+      data: user,
+      role: user.role,
+      subscription: sub,
+      subscriptionActive,
+    });
   } catch (err) {
     res.status(500).json({ success: false, message: err.message });
   }
