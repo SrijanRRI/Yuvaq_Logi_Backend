@@ -1831,6 +1831,26 @@ export const respondSelectionConfirmation = async (req, res) => {
 
     tender.selection.respondedAt = new Date();
 
+    const feePercent = Number(process.env.CONFIRM_ACCEPT_FEE_PERCENT || 0);
+
+    if (action === "accept" && feePercent > 0) {
+      const quotationId = String(tender.selection?.quotation || "");
+      const payRow = await TenderPayment.findOne({
+        tenderId,
+        quotationId,
+        rrUserId: req.user.id, // payer (transporter)
+        purpose: "selection_confirmation_fee",
+        status: { $in: ["paid", "captured"] },
+      }).lean();
+
+      if (!payRow) {
+        return res.status(402).json({
+          success: false,
+          message: "Payment required to accept this confirmation.",
+        });
+      }
+    }
+
     if (action === "accept") {
       tender.selection.status = "confirmed";
       tender.selection.response = "accepted";
