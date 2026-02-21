@@ -27,10 +27,9 @@ export const createTender = async (req, res) => {
   try {
     const {
       shipmentPlanId,
-      dispatchLocation,
-      address,
-      pincode,
-      materials,
+      pickup,
+      drop,
+      vehicleRequirements,
       transporters,
       remarks,
       closeDate,
@@ -68,10 +67,29 @@ export const createTender = async (req, res) => {
         message: "Delivery window (from and to dates) is required",
       });
     }
-    if (!materials || !Array.isArray(materials) || materials.length === 0) {
+
+    if (!pickup?.pincode || !pickup?.address) {
       return res.status(400).json({
         success: false,
-        message: "At least one material entry is required",
+        message: "Pickup pincode and address are required",
+      });
+    }
+
+    if (!drop?.pincode || !drop?.address) {
+      return res.status(400).json({
+        success: false,
+        message: "Drop pincode and address are required",
+      });
+    }
+
+    if (
+      !vehicleRequirements ||
+      !Array.isArray(vehicleRequirements) ||
+      vehicleRequirements.length === 0
+    ) {
+      return res.status(400).json({
+        success: false,
+        message: "At least one vehicle requirement is required",
       });
     }
 
@@ -120,12 +138,37 @@ export const createTender = async (req, res) => {
       utcCloseDate = new Date(Date.UTC(year, month - 1, day));
     }
 
-    const normalizedMaterials = materials.map((m) => ({
-      material: m.material,
-      subMaterial: m.subMaterial || "",
-      weight: m.weight,
-      quantity: m.quantity,
+    // normalize vehicle requirements
+    const normalizedVehicles = vehicleRequirements.map((v) => ({
+      vehicleId: v.vehicleId,
+      category: String(v.category || "").trim(),
+      subCategory: String(v.subCategory || "").trim(),
+      quantity: Number(v.quantity || 1),
     }));
+
+    // validate each vehicle row
+    for (const v of normalizedVehicles) {
+      if (!v.vehicleId || !mongoose.isValidObjectId(v.vehicleId)) {
+        return res.status(400).json({
+          success: false,
+          message: "Valid vehicleId is required for each vehicle requirement",
+        });
+      }
+
+      if (!v.category || !v.subCategory) {
+        return res.status(400).json({
+          success: false,
+          message:
+            "Each vehicle requirement must include category and subCategory",
+        });
+      }
+      if (!Number.isFinite(v.quantity) || v.quantity < 1) {
+        return res.status(400).json({
+          success: false,
+          message: "Vehicle quantity must be a number >= 1",
+        });
+      }
+    }
 
     // ✅ validate bid limits
     const minAmt = Number(minBidAmount);
@@ -163,10 +206,9 @@ export const createTender = async (req, res) => {
     const tenderPayload = {
       createdBy: req.user.id,
       shipmentPlan: shipmentPlanRef || null,
-      dispatchLocation,
-      address,
-      pincode,
-      materials: normalizedMaterials,
+      pickup,
+      drop,
+      vehicleRequirements: normalizedVehicles,
       transporters,
       remarks: remarks || "",
       closeDate: utcCloseDate,
@@ -198,6 +240,7 @@ export const createTender = async (req, res) => {
     res.status(500).json({ success: false, message: error.message });
   }
 };
+
 // ✅ 2. Finalize Tender
 export const finalizeTender = async (req, res) => {
   try {
@@ -295,6 +338,82 @@ export const finalizeTender = async (req, res) => {
         .json({ success: false, message: "RR user not found" });
     }
 
+    /* ------------------------------ helpers (NEW) ------------------------------ */
+
+    const join = (...parts) => parts.filter(Boolean).join(", ");
+
+    const formatLocation = (loc) => {
+      // New schema (pickup/drop)
+      if (loc && typeof loc === "object") {
+        const line = join(
+          loc.address,
+          loc.location,
+          loc.city,
+          loc.district,
+          loc.state,
+          loc.pincode,
+          loc.country,
+        );
+        return line || "-";
+      }
+
+      // Fallback for old schema (dispatchLocation/address/pincode)
+      const legacy = join(
+        tender.dispatchLocation,
+        tender.address,
+        tender.pincode,
+      );
+      return legacy || "-";
+    };
+
+    const pickupText = tender.pickup
+      ? formatLocation(tender.pickup)
+      : formatLocation(null);
+    const dropText = tender.drop ? formatLocation(tender.drop) : "-";
+
+    const vehiclesHtml =
+      Array.isArray(tender.vehicleRequirements) &&
+      tender.vehicleRequirements.length
+        ? `
+          <ul style="margin-top:10px; padding-left:20px;">
+            ${tender.vehicleRequirements
+              .map(
+                (v) => `
+                <li>
+                  ${v.category || "-"} - ${v.subCategory || "-"}
+                  ${v.quantity ? ` (Qty: ${v.quantity})` : ""}
+                </li>
+              `,
+              )
+              .join("")}
+          </ul>
+        `
+        : "";
+
+    // fallback for your older tenders (materials array)
+    const materialsHtml =
+      Array.isArray(tender.materials) && tender.materials.length
+        ? `
+          <ul style="margin-top:10px; padding-left:20px;">
+            ${tender.materials
+              .map(
+                (mat) => `
+                <li>
+                  ${mat.material || mat.item || "-"} (${mat.subMaterial || mat.subItem || "N/A"})
+                  - ${mat.weight || "-"} MT, ${mat.quantity || "-"} Qty
+                </li>
+              `,
+              )
+              .join("")}
+          </ul>
+        `
+        : "";
+
+    // Use vehicles if present, else fallback to materials (keeps old flow safe)
+    const itemsHtml = vehiclesHtml || materialsHtml || "<p>-</p>";
+
+    /* ------------------------------ final save (same) ------------------------------ */
+
     // ✅ Update tender with finalization
     tender.selectedQuotation = quotation._id;
     tender.finalTransporter = quotation.transportUser;
@@ -339,8 +458,12 @@ export const finalizeTender = async (req, res) => {
 
                   <table cellpadding="5" cellspacing="0" width="100%" style="margin: 20px 0;">
                     <tr>
-                      <td style="font-weight:bold;">📍 Dispatch Location:</td>
-                      <td>${tender.dispatchLocation}</td>
+                      <td style="font-weight:bold;">📍 Pickup Location:</td>
+                      <td>${pickupText}</td>
+                    </tr>
+                    <tr>
+                      <td style="font-weight:bold;">📍 Drop Location:</td>
+                      <td>${dropText}</td>
                     </tr>
                     <tr>
                       <td style="font-weight:bold;">🚚 Delivery Window:</td>
@@ -354,20 +477,15 @@ export const finalizeTender = async (req, res) => {
                     </tr>
                   </table>
 
-                  <p style="margin-top:30px;"><strong>📦 Tender Items:</strong></p>
-                  <ul style="margin-top:10px; padding-left:20px;">
-                    ${tender.materials
-                      .map(
-                        (mat) => `
-                      <li>${mat.material} (${mat.subMaterial || "N/A"}) - ${
-                        mat.weight
-                      } MT, ${mat.quantity} Qty</li>
-                    `,
-                      )
-                      .join("")}
-                  </ul>
+                  <p style="margin-top:30px;"><strong>🚛 Vehicle / Items:</strong></p>
+                  ${itemsHtml}
 
-                  <p style="margin-top:30px;">
+                  <p style="margin-top:18px;">
+                    <strong>Total Weight:</strong> ${tender.totalWeight ?? "-"} MT<br/>
+                    <strong>Total Quantity:</strong> ${tender.totalQuantity ?? "-"}
+                  </p>
+
+                  <p style="margin-top:22px;">
                     <strong>✅ Finalized Price:</strong> ₹${finalPrice}
                   </p>
 
@@ -405,7 +523,7 @@ export const finalizeTender = async (req, res) => {
       );
     }
 
-    // 2) ✅ NEW: Email to RR User (creator) with winner contact details
+    // ✅ Email to RR User (creator) with winner contact details
     try {
       await sendMail({
         to: rrUser.email,
@@ -443,16 +561,24 @@ export const finalizeTender = async (req, res) => {
                   <td>${tender.purchaseOrder || "-"}</td>
                 </tr>
                 <tr style="background:#f8fafc;">
-                  <td style="font-weight:bold;">Dispatch</td>
-                  <td>${[tender.dispatchLocation, tender.address, tender.pincode].filter(Boolean).join(", ") || "-"}</td>
+                  <td style="font-weight:bold;">Pickup</td>
+                  <td>${pickupText}</td>
                 </tr>
                 <tr>
+                  <td style="font-weight:bold;">Drop</td>
+                  <td>${dropText}</td>
+                </tr>
+                <tr style="background:#f8fafc;">
                   <td style="font-weight:bold;">Delivery Window</td>
                   <td>
                     ${moment(tender.deliveryWindow.from).tz("Asia/Kolkata").format("DD MMM YYYY")}
                     to
                     ${moment(tender.deliveryWindow.to).tz("Asia/Kolkata").format("DD MMM YYYY")}
                   </td>
+                </tr>
+                <tr>
+                  <td style="font-weight:bold;">Vehicle / Items</td>
+                  <td>${itemsHtml}</td>
                 </tr>
                 <tr style="background:#f8fafc;">
                   <td style="font-weight:bold;">Finalized Price</td>
@@ -1070,18 +1196,26 @@ export const getQuotationHistoryForTransporter = async (req, res) => {
       result.push({
         tenderId: tender._id,
         tender: {
-          dispatchLocation: tender.dispatchLocation,
-          address: tender.address,
+          // ✅ NEW: pickup/drop instead of dispatchLocation/address
+          pickup: tender.pickup || null,
+          drop: tender.drop || null,
+
+          // ✅ NEW: vehicleRequirements instead of materials
+          vehicleRequirements: Array.isArray(tender.vehicleRequirements)
+            ? tender.vehicleRequirements
+            : [],
+
           deliveryWindow: tender.deliveryWindow || { from: null, to: null },
           closeDate: tender.closeDate,
           status: tender.status,
           remarks: tender.remarks,
-          materials: tender.materials || [],
+
           totalWeight: tender.totalWeight,
           totalQuantity: tender.totalQuantity,
           createdBy: tender.createdBy || null,
-          maxBidAmount: tender.maxBidAmount,
-          maxBidUnit: tender.maxBidUnit || null,
+          // minBidAmount : tender.minBidAmount,
+          // maxBidAmount: tender.maxBidAmount,
+          // maxBidUnit: tender.maxBidUnit || null,
           finalizedStatus: isSelected
             ? "Your quotation was finalized"
             : "Your quotation was not selected",
@@ -1768,12 +1902,11 @@ export const getPendingConfirmationsForTransporter = async (req, res) => {
           "projectName",
           "projectCode",
           "projectRemark", //  remark
-          "dispatchLocation", //  location
-          "address",
-          "pincode",
+          "pickup",
+          "drop",
           "closeDate", //  close date
           "deliveryWindow",
-          "materials", //  material list
+          "vehicleRequirements",
           "status",
           "selection", // contains quotation + requestedAt + etc
           "createdBy", //  who sent (RR user)
@@ -1799,12 +1932,18 @@ export const getPendingConfirmationsForTransporter = async (req, res) => {
       // projectName: t.projectName,
       // projectCode: t.projectCode,
       // projectRemark: t.projectRemark || "",
-      dispatchLocation: t.dispatchLocation,
-      address: t.address,
-      pincode: t.pincode,
+
+      // ✅ NEW: pickup/drop instead of dispatchLocation/address/pincode
+      pickup: t.pickup || null,
+      drop: t.drop || null,
+
       closeDate: t.closeDate,
       deliveryWindow: t.deliveryWindow,
-      materials: t.materials || [],
+
+      // ✅ NEW: vehicleRequirements instead of materials
+      vehicleRequirements: Array.isArray(t.vehicleRequirements)
+        ? t.vehicleRequirements
+        : [],
 
       status: t.status,
 

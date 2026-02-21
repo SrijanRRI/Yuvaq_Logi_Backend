@@ -61,11 +61,24 @@ export const login = async (req, res) => {
     const userData = user.toObject();
     delete userData.password;
 
-    return res.status(200).cookie("token", token, cookieOptions).json({
-      success: true,
-      message: "Login successful",
-      data: userData,
-    });
+    // compute subscription flags for frontend
+    const sub = userData.subscription || { status: "none" };
+    const isSubActive =
+      sub.status === "active" &&
+      sub.endsAt &&
+      new Date(sub.endsAt) > new Date();
+
+    return res
+      .status(200)
+      .cookie("token", token, cookieOptions)
+      .json({
+        success: true,
+        message: "Login successful",
+        data: userData,
+        subscription: sub,
+        subscriptionActive: isSubActive,
+        subscriptionRequired: userData.role !== "admin" && !isSubActive, // today both user + transportUser
+      });
   } catch (error) {
     return res.status(500).json({
       success: false,
@@ -176,7 +189,7 @@ export const logout = async (req, res, next) => {
       message: "Logged Out",
     });
   } catch (error) {
-    res.stats(400).json({
+    res.status(400).json({
       success: false,
       message: error.message,
     });
@@ -229,7 +242,7 @@ export const forgotPassword = async (req, res, next) => {
       {
         forgotPasswordToken: user.forgotPasswordToken,
         forgotPasswordExpiryDate: user.forgotPasswordExpiryDate,
-      }
+      },
     );
 
     const transporter = nodemailer.createTransport({
@@ -307,7 +320,7 @@ export const resetPassword = async (req, res, next) => {
         password: hashedPassword,
         forgotPasswordToken: undefined,
         forgotPasswordExpiryDate: undefined,
-      }
+      },
     );
 
     return res.status(200).json({
@@ -348,7 +361,19 @@ export const getCurrentUser = async (req, res) => {
         .status(404)
         .json({ success: false, message: "User not found" });
 
-    res.status(200).json({ success: true, data: user, role: user.role });
+    const sub = user.subscription || { status: "none" };
+    const subscriptionActive =
+      sub.status === "active" &&
+      sub.endsAt &&
+      new Date(sub.endsAt) > new Date();
+
+    return res.status(200).json({
+      success: true,
+      data: user,
+      role: user.role,
+      subscription: sub,
+      subscriptionActive,
+    });
   } catch (err) {
     res.status(500).json({ success: false, message: err.message });
   }

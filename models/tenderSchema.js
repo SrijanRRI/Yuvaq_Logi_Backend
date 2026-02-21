@@ -1,5 +1,48 @@
 import mongoose, { Schema } from "mongoose";
 
+const locationSchema = new Schema(
+  {
+    // auto-filled via pincode lookup (frontend) - user can still edit if you allow
+    location: { type: String, trim: true, default: "" }, // locality/area/post office name etc.
+    city: { type: String, trim: true, default: "" }, // city / block / subdivision (as you decide in FE)
+    district: { type: String, trim: true, default: "" },
+    state: { type: String, trim: true, default: "" },
+
+    // required core
+    pincode: {
+      type: String,
+      required: true,
+      trim: true,
+      validate: {
+        validator: (v) => /^\d{6}$/.test(String(v)),
+        message: "Pincode must be 6 digits",
+      },
+    },
+
+    // user-entered precise address (textarea)
+    address: { type: String, required: true, trim: true },
+
+    // optional: future-proof
+    country: { type: String, trim: true, default: "India" },
+  },
+  { _id: false },
+);
+
+/* ---------------- Vehicle Requirement (Tender) ---------------- */
+const vehicleRequirementSchema = new Schema(
+  {
+    vehicleId: {
+      type: Schema.Types.ObjectId,
+      ref: "VehicleCatalog",
+      required: true,
+    },
+    category: { type: String, required: true, trim: true }, // snapshot
+    subCategory: { type: String, required: true, trim: true }, // snapshot
+    quantity: { type: Number, default: 1, min: 1 },
+  },
+  { _id: false },
+);
+
 const tenderSchema = new mongoose.Schema(
   {
     createdBy: {
@@ -18,25 +61,25 @@ const tenderSchema = new mongoose.Schema(
       to: { type: Date, required: true },
     },
 
-    // 🆕 Close date remains for tagging/reporting
+    // Close date remains for tagging/reporting
     closeDate: { type: Date, required: true },
 
-    // 🆕 Bidding period support
+    // Bidding period support
     biddingStart: { type: Date, required: true },
     biddingEnd: { type: Date, required: true },
 
-    dispatchLocation: { type: String, required: true },
-    address: { type: String, required: true },
-    pincode: { type: String, required: true },
+    pickup: { type: locationSchema, default: null },
 
-    materials: [
-      {
-        material: { type: String, required: true },
-        subMaterial: { type: String, default: "", trim: true },
-        weight: { type: Number },
-        quantity: { type: Number },
+    drop: { type: locationSchema, default: null },
+
+    vehicleRequirements: {
+      type: [vehicleRequirementSchema],
+      validate: {
+        validator: (arr) => Array.isArray(arr) && arr.length > 0,
+        message: "At least one vehicle requirement is required",
       },
-    ],
+      required: true,
+    },
 
     totalWeight: { type: Number, required: true },
     totalQuantity: { type: Number, required: true },
@@ -133,7 +176,7 @@ const tenderSchema = new mongoose.Schema(
         ref: "Quotation",
         default: null,
       },
-      transporter: { type: Schema.Types.ObjectId, ref: "User", default: null },
+      transporter: { type: Schema.Types.ObjectId, ref: "user", default: null },
 
       requestedAt: { type: Date, default: null },
       respondedAt: { type: Date, default: null },
@@ -155,7 +198,7 @@ const tenderSchema = new mongoose.Schema(
         },
         transporter: {
           type: Schema.Types.ObjectId,
-          ref: "User",
+          ref: "user",
           default: null,
         },
 
@@ -210,5 +253,14 @@ const tenderSchema = new mongoose.Schema(
 
 tenderSchema.index({ "postBid.status": 1, "postBid.endsAt": 1 });
 tenderSchema.index({ biddingEnd: 1 });
+
+tenderSchema.index({ "pickup.pincode": 1 });
+tenderSchema.index({ "drop.pincode": 1 });
+tenderSchema.index({ "pickup.state": 1, "pickup.district": 1 });
+tenderSchema.index({ "drop.state": 1, "drop.district": 1 });
+
+tenderSchema.index({ "vehicleRequirements.vehicleId": 1 });
+tenderSchema.index({ "vehicleRequirements.category": 1 });
+tenderSchema.index({ "vehicleRequirements.subCategory": 1 });
 
 export default mongoose.model("Tender", tenderSchema);

@@ -9,7 +9,7 @@ const ApprovalsSchema = new mongoose.Schema(
     approvedBy: [{ type: mongoose.Schema.Types.ObjectId, ref: "user" }],
     finalizedAt: { type: Date, default: null },
   },
-  { _id: false }
+  { _id: false },
 );
 
 const userSchema = new mongoose.Schema(
@@ -39,7 +39,7 @@ const userSchema = new mongoose.Schema(
       default: "user",
     },
     gstn: {
-      type: String,     
+      type: String,
       trim: true,
       uppercase: true,
       unique: true, // if you want no duplicates
@@ -63,8 +63,26 @@ const userSchema = new mongoose.Schema(
     notifiedAt: { type: Date, default: null }, // <-- add this
     forgotPasswordToken: String,
     forgotPasswordExpiryDate: Date,
+
+    subscription: {
+      status: {
+        type: String,
+        enum: ["none", "active", "expired"],
+        default: "none",
+        index: true,
+      },
+      plan: {
+        type: String,
+        enum: ["monthly", "yearly"],
+        default: null,
+      },
+      startsAt: { type: Date, default: null },
+      endsAt: { type: Date, default: null, index: true },
+      lastPaymentId: { type: String, default: null },
+      updatedAt: { type: Date, default: null },
+    },
   },
-  { timestamps: true }
+  { timestamps: true },
 );
 
 // ---- Indexes ----
@@ -87,7 +105,7 @@ userSchema.methods = {
         isApproved: this.isApproved,
       },
       process.env.SECRET,
-      { expiresIn: "24h" }
+      { expiresIn: "24h" },
     );
   },
 
@@ -104,7 +122,7 @@ userSchema.methods = {
 
   hasBeenApprovedBy(adminId) {
     return (this.approvals?.approvedBy || []).some(
-      (id) => String(id) === String(adminId)
+      (id) => String(id) === String(adminId),
     );
   },
 };
