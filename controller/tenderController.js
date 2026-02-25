@@ -35,7 +35,8 @@ export const createTender = async (req, res) => {
       closeDate,
       deliveryWindow,
       biddingStart,
-      biddingEnd,
+      biddingEnd, // (Soft End for now)
+      biddingHardEnd, // ✅ NEW (optional for now)
       totalWeight,
       totalQuantity,
       projectName,
@@ -126,6 +127,22 @@ export const createTender = async (req, res) => {
     const timezone = "Asia/Kolkata";
     const utcBiddingStart = moment.tz(biddingStart, timezone).utc().toDate();
     const utcBiddingEnd = moment.tz(biddingEnd, timezone).utc().toDate();
+
+    const utcBiddingSoftEnd = utcBiddingEnd;
+
+    // ✅ if frontend doesn't send biddingHardEnd, hard = soft (no extension; same as today)
+    const utcBiddingHardEnd = biddingHardEnd
+      ? moment.tz(biddingHardEnd, timezone).utc().toDate()
+      : utcBiddingEnd;
+
+    // ✅ validate hard end >= soft end (only when provided)
+    if (utcBiddingHardEnd.getTime() < utcBiddingSoftEnd.getTime()) {
+      return res.status(400).json({
+        success: false,
+        message: "biddingHardEnd must be >= biddingEnd (soft end)",
+      });
+    }
+
     const utcDeliveryFrom = moment
       .tz(deliveryWindow.from, timezone)
       .utc()
@@ -213,7 +230,12 @@ export const createTender = async (req, res) => {
       remarks: remarks || "",
       closeDate: utcCloseDate,
       biddingStart: utcBiddingStart,
-      biddingEnd: utcBiddingEnd,
+      biddingEnd: utcBiddingSoftEnd,
+      
+      //  store soft/hard explicitly
+      biddingSoftEnd: utcBiddingSoftEnd,
+      biddingHardEnd: utcBiddingHardEnd,
+
       deliveryWindow: { from: utcDeliveryFrom, to: utcDeliveryTo },
       totalWeight,
       totalQuantity,
