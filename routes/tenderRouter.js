@@ -19,7 +19,7 @@ import {
   // getAllFinalizedTendersWithQuotations
 } from "../controller/tenderController.js";
 
-import { createFinalizeOrder, verifyFinalizePayment } from "../controller/tenderPaymentController.js";
+import { createFinalizeOrder, createSelectionAcceptFeeOrder, verifyFinalizePayment, verifySelectionAcceptFeePayment } from "../controller/tenderPaymentController.js";
 import { jwtAuth } from "../middleware/jwtAuth.js";
 
 import { getActivePostBidForTransporter, startPostBidNegotiation } from "../controller/postBidController.js";
@@ -75,6 +75,11 @@ router.post("/:id/selection/respond", jwtAuth, subscriptionGate, respondSelectio
 
 // Transporter can list pending confirmations
 router.get("/transporter/pending-confirmations", jwtAuth, subscriptionGate, getPendingConfirmationsForTransporter);
+
+// transporter accept fee (order + verify)
+router.post("/:id/selection/accept/payment/order", jwtAuth, subscriptionGate, createSelectionAcceptFeeOrder);
+
+router.post("/:id/selection/accept/payment/verify", jwtAuth, subscriptionGate, verifySelectionAcceptFeePayment);
 
 // Post Bid Negotiation : 
 router.post("/:id/post-bid/start", jwtAuth, subscriptionGate, startPostBidNegotiation);

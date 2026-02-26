@@ -16,7 +16,7 @@ COPY . .
 # Set environment variables
 ENV NODE_ENV=production
 ENV PORT=86
-ENV MONGO_URI=mongodb://192.168.13.84/Yuvaq_Logiyatra_testing
+ENV MONGO_URI=mongodb://192.168.13.84/Yuvaq_Logiyatra
 ENV SMTP_HOST=smtp.gmail.com
 ENV SMTP_USER=techsupport@rrispat.com 
 ENV SMTP_PASS=kjdgsyrnkvdmcugw
@@ -35,6 +35,13 @@ ENV MINIO_ACCESS_KEY=uXgiyxKRlviRvIDvolPX
 ENV MINIO_SECRET_KEY=vCyBd3GQtRFtt4mSjrWS5D2mJYhjkP2tuGJzeXTi
 ENV MINIO_BUCKET=tenderrr
 
+# Subscription + Fees (ADD THESE)
+ENV SUBSCRIPTION_MONTHLY_INR=499
+ENV SUBSCRIPTION_YEARLY_INR=4999
+ENV SUBSCRIPTION_PAY_ROLES="user,transportUser"
+ENV CONFIRM_ACCEPT_FEE_PERCENT=0
+ENV FINALIZE_ADVANCE_PERCENT=0
+
 # Expose your app port
 EXPOSE ${PORT}
 
@@ -43,10 +50,10 @@ CMD ["node", "index.js"]
 
 
 
-# docker build  --no-cache -t 192.168.13.72:5000/logiq_be_17_feb .      
-# docker run -d --name logiq_be_17_feb -p 86:86 logiq_be_image
+# docker build  --no-cache -t 192.168.13.72:5000/logiq_be_21_feb .      
+# docker run -d --name logiq_be_21_feb -p 86:86 logiq_be_image
 
-# docker tag logiq_be_image 192.168.13.72:5000/logiq_be_17_feb
-# docker push 192.168.13.72:5000/logiq_be_17_feb
-# docker pull 192.168.13.72:5000/logiq_be_17_feb
-# docker run -d --name logiq_be_17_feb -p 86:86 192.168.13.72:5000/logiq_be_17_feb
+# docker tag logiq_be_image 192.168.13.72:5000/logiq_be_21_feb
+# docker push 192.168.13.72:5000/logiq_be_21_feb
+# docker pull 192.168.13.72:5000/logiq_be_21_feb
+# docker run -d --name logiq_be_21_feb -p 86:86 192.168.13.72:5000/logiq_be_21_feb

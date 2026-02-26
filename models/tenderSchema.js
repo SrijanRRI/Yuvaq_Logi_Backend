@@ -66,7 +66,32 @@ const tenderSchema = new mongoose.Schema(
 
     // Bidding period support
     biddingStart: { type: Date, required: true },
+
+    // ✅ biddingEnd = CURRENT effective end (will extend during soft-close)
     biddingEnd: { type: Date, required: true },
+
+    // ✅ Soft close end (what you want to show in UI later)
+    // default null for backward compatibility; backend will fallback to biddingEnd
+    biddingSoftEnd: { type: Date, default: null },
+
+    // ✅ Hard stop end (final cap, never extend after this)
+    // default null for backward compatibility; backend will fallback to biddingEnd
+    biddingHardEnd: { type: Date, default: null },
+
+    // ✅ optional audit trail (won’t affect existing logic)
+    biddingExtensions: [
+      {
+        at: { type: Date, default: Date.now },
+        from: { type: Date },
+        to: { type: Date },
+        by: { type: Schema.Types.ObjectId, ref: "user" },
+        quotation: {
+          type: Schema.Types.ObjectId,
+          ref: "Quotation",
+          default: null,
+        },
+      },
+    ],
 
     pickup: { type: locationSchema, default: null },
 
@@ -262,5 +287,8 @@ tenderSchema.index({ "drop.state": 1, "drop.district": 1 });
 tenderSchema.index({ "vehicleRequirements.vehicleId": 1 });
 tenderSchema.index({ "vehicleRequirements.category": 1 });
 tenderSchema.index({ "vehicleRequirements.subCategory": 1 });
+
+tenderSchema.index({ biddingHardEnd: 1 });
+tenderSchema.index({ biddingSoftEnd: 1 });
 
 export default mongoose.model("Tender", tenderSchema);

@@ -27,15 +27,25 @@ function hmacSHA256(secret, payload) {
  * POST /tenders/:id/finalize/payment/order
  * body: { quotationId, finalPrice }
  */
+
+const SERVER_ADVANCE_PERCENT = Number(
+  process.env.FINALIZE_ADVANCE_PERCENT ?? 5,
+);
+
 export const createFinalizeOrder = async (req, res) => {
+  const percent = Number.isFinite(SERVER_ADVANCE_PERCENT)
+    ? SERVER_ADVANCE_PERCENT
+    : 5;
+
   if (!req.user?.id) return res.status(401).json({ message: "Unauthorized" });
 
   try {
     const tenderId = req.params.id;
     const { quotationId } = req.body;
 
-    if (!quotationId)
+    if (!quotationId) {
       return res.status(400).json({ message: "quotationId is required" });
+    }
 
     const tender = await Tender.findById(tenderId);
     if (!tender) return res.status(404).json({ message: "Tender not found" });
@@ -61,6 +71,22 @@ export const createFinalizeOrder = async (req, res) => {
 
     const purpose = "tender_finalization_advance";
 
+    // ✅ allow 0%
+    if (!Number.isFinite(percent) || percent < 0) {
+      return res.status(400).json({ message: "Invalid advance percent" });
+    }
+
+    // ✅ MUST be confirmed BEFORE we allow free/calc/order
+    if (
+      tender.selection?.status !== "confirmed" ||
+      String(tender.selection?.quotation) !== String(quotationId)
+    ) {
+      return res.status(409).json({
+        success: false,
+        message: "Transporter has not confirmed this quotation yet.",
+      });
+    }
+
     // ✅ 1) Check if a payment row already exists (idempotency key)
     const existing = await TenderPayment.findOne({
       tenderId,
@@ -69,8 +95,86 @@ export const createFinalizeOrder = async (req, res) => {
       purpose,
     });
 
+    // ✅ PROMO/FREE MODE (percent == 0) => mark payment as captured with amount 0
+    // 📌 PUT THIS RIGHT HERE (after existing is loaded)
+    if (percent === 0) {
+      // already paid/captured => return
+      if (existing && ["paid", "captured"].includes(existing.status)) {
+        return res.json({
+          alreadyPaid: true,
+          alreadyFinalized: false,
+          promoFree: true,
+          keyId: process.env.RAZORPAY_KEY_ID,
+          orderId: existing.razorpayOrderId,
+          amount: existing.amount ?? 0,
+          currency: existing.currency ?? "INR",
+          notes: existing.notes || {},
+        });
+      }
+
+      const notes = {
+        purpose,
+        mode: "promo_free",
+        tenderId: String(tenderId),
+        quotationId: String(quotationId),
+        rrUserId: String(req.user.id),
+        advancePercent: "0",
+        advanceRupees: "0",
+      };
+
+      // if there is an existing unpaid order row (created/failed), convert it to captured=0
+      if (existing) {
+        existing.status = "captured";
+        existing.amount = 0;
+        existing.currency = existing.currency || "INR";
+        existing.notes = { ...(existing.notes || {}), ...notes };
+        existing.paidAt = existing.paidAt || new Date();
+        existing.capturedAt = existing.capturedAt || new Date();
+        await existing.save();
+
+        return res.json({
+          alreadyPaid: true,
+          alreadyFinalized: false,
+          promoFree: true,
+          keyId: process.env.RAZORPAY_KEY_ID,
+          orderId: existing.razorpayOrderId,
+          amount: 0,
+          currency: existing.currency || "INR",
+          notes: existing.notes || {},
+        });
+      }
+
+      // create a pseudo order id (not a real Razorpay order) for bookkeeping
+      const pseudoOrderId = `FREE_${makeReceipt(tenderId)}`;
+
+      await TenderPayment.create({
+        tenderId,
+        quotationId,
+        rrUserId: req.user.id,
+        purpose,
+        razorpayOrderId: pseudoOrderId,
+        amount: 0,
+        currency: "INR",
+        status: "captured",
+        notes,
+        paidAt: new Date(),
+        capturedAt: new Date(),
+      });
+
+      return res.json({
+        alreadyPaid: true,
+        alreadyFinalized: false,
+        promoFree: true,
+        keyId: process.env.RAZORPAY_KEY_ID,
+        orderId: pseudoOrderId,
+        amount: 0,
+        currency: "INR",
+        notes,
+      });
+    }
+
+    // ✅ If existing order/payment exists (normal paid flow)
     if (existing) {
-      // ✅ Payment already done → do NOT ask again
       if (existing.status === "paid" || existing.status === "captured") {
         return res.json({
           alreadyPaid: true,
@@ -83,7 +187,6 @@ export const createFinalizeOrder = async (req, res) => {
         });
       }
 
-      // ✅ Order exists but not paid → reuse same orderId (do NOT create new)
       return res.json({
         reusedOrder: true,
         alreadyPaid: false,
@@ -95,13 +198,8 @@ export const createFinalizeOrder = async (req, res) => {
       });
     }
 
-    // ----- No existing row → create NEW order once -----
-
-    const percent = Number(
-      req.body.advancePercentNotice ?? req.body.advancePercent ?? 5,
-    );
+    // ----- No existing row → create NEW Razorpay order (percent > 0 only) -----
     const finalPricePerMt = Number(req.body.finalPricePerMt ?? quotation.price);
-
     const totalWeightMt = Number(
       req.body.totalWeightMt ??
         tender.totalWeight ??
@@ -114,28 +212,6 @@ export const createFinalizeOrder = async (req, res) => {
     if (!Number.isFinite(totalWeightMt) || totalWeightMt <= 0) {
       return res.status(400).json({ message: "Invalid totalWeightMt" });
     }
-    if (!Number.isFinite(percent) || percent <= 0) {
-      return res.status(400).json({ message: "Invalid advance percent" });
-    }
-
-    // ✅ MUST be confirmed BEFORE we reuse/create any Razorpay order
-    if (
-      tender.selection?.status !== "confirmed" ||
-      String(tender.selection?.quotation) !== String(quotationId)
-    ) {
-      return res.status(409).json({
-        success: false,
-        message: "Transporter has not confirmed this quotation yet.",
-      });
-    }
-
-    // ✅ now do TenderPayment lookup (idempotency)
-    // const existing = await TenderPayment.findOne({
-    //   tenderId,
-    //   quotationId,
-    //   rrUserId: req.user.id,
-    //   purpose,
-    // });
 
     const totalRupees = finalPricePerMt * totalWeightMt;
     const advanceRupees = (totalRupees * percent) / 100;
@@ -183,34 +259,6 @@ export const createFinalizeOrder = async (req, res) => {
       reusedOrder: false,
     });
   } catch (err) {
-    // if unique index race happens, fetch existing and return it
-    if (err?.code === 11000) {
-      const tenderId = req.params.id;
-      const { quotationId } = req.body;
-      const purpose = "tender_finalization_advance";
-
-      const existing = await TenderPayment.findOne({
-        tenderId,
-        quotationId,
-        rrUserId: req.user.id,
-        purpose,
-      });
-
-      if (existing) {
-        return res.json({
-          alreadyPaid:
-            existing.status === "paid" || existing.status === "captured",
-          reusedOrder: true,
-          keyId: process.env.RAZORPAY_KEY_ID,
-          orderId: existing.razorpayOrderId,
-          amount: existing.amount,
-          currency: existing.currency,
-          razorpayPaymentId: existing.razorpayPaymentId || null,
-          notes: existing.notes || {},
-        });
-      }
-    }
-
     console.error("createFinalizeOrder error:", err);
     return res.status(500).json({ message: "Could not create order" });
   }
@@ -389,5 +437,206 @@ export const razorpayWebhook = async (req, res) => {
   } catch (err) {
     console.error("razorpayWebhook error:", err);
     return res.status(500).send("Webhook error");
+  }
+};
+
+const CONFIRM_ACCEPT_FEE_PERCENT = Number(
+  process.env.CONFIRM_ACCEPT_FEE_PERCENT || 0,
+);
+
+export const createSelectionAcceptFeeOrder = async (req, res) => {
+  try {
+    if (!req.user?.id) return res.status(401).json({ message: "Unauthorized" });
+
+    const tenderId = req.params.id;
+
+    // Tender must exist and be pending confirmation for THIS transporter
+    const tender = await Tender.findById(tenderId);
+    if (!tender) return res.status(404).json({ message: "Tender not found" });
+
+    if (tender.selection?.status !== "pending") {
+      return res
+        .status(409)
+        .json({ message: "No pending confirmation for this tender." });
+    }
+
+    if (String(tender.selection?.transporter) !== String(req.user.id)) {
+      return res
+        .status(403)
+        .json({ message: "Unauthorized: not selected transporter" });
+    }
+
+    const quotationId = String(tender.selection?.quotation || "");
+    if (!quotationId)
+      return res.status(400).json({ message: "Selected quotation missing" });
+
+    // Fee disabled => tell frontend it's free
+    if (
+      !Number.isFinite(CONFIRM_ACCEPT_FEE_PERCENT) ||
+      CONFIRM_ACCEPT_FEE_PERCENT <= 0
+    ) {
+      return res.json({
+        feePercent: 0,
+        payablePaise: 0,
+        skipped: true,
+        alreadyPaid: true, // treat as no payment required
+      });
+    }
+
+    // fetch quotation for base amount
+    const quotation = await Quotation.findById(quotationId).lean();
+    if (!quotation)
+      return res.status(404).json({ message: "Quotation not found" });
+
+    const baseAmountRupees = Number(quotation.price || 0);
+    if (!Number.isFinite(baseAmountRupees) || baseAmountRupees <= 0) {
+      return res.status(400).json({ message: "Invalid quotation price" });
+    }
+
+    const feeRupees = (baseAmountRupees * CONFIRM_ACCEPT_FEE_PERCENT) / 100;
+    const amountPaise = INR_TO_PAISE(feeRupees);
+
+    const purpose = "selection_confirmation_fee";
+
+    // idempotency: do not create multiple orders
+    const existing = await TenderPayment.findOne({
+      tenderId,
+      quotationId,
+      rrUserId: req.user.id, // payer (transporter)
+      purpose,
+    });
+
+    if (existing) {
+      if (existing.status === "paid" || existing.status === "captured") {
+        return res.json({
+          feePercent: CONFIRM_ACCEPT_FEE_PERCENT,
+          alreadyPaid: true,
+          keyId: process.env.RAZORPAY_KEY_ID,
+          orderId: existing.razorpayOrderId,
+          amount: existing.amount,
+          currency: existing.currency,
+        });
+      }
+
+      return res.json({
+        feePercent: CONFIRM_ACCEPT_FEE_PERCENT,
+        reusedOrder: true,
+        alreadyPaid: false,
+        keyId: process.env.RAZORPAY_KEY_ID,
+        orderId: existing.razorpayOrderId,
+        amount: existing.amount,
+        currency: existing.currency,
+      });
+    }
+
+    const notes = {
+      purpose,
+      tenderId: String(tenderId),
+      quotationId: String(quotationId),
+      transporterId: String(req.user.id),
+      feePercent: String(CONFIRM_ACCEPT_FEE_PERCENT),
+      baseAmountRupees: String(baseAmountRupees),
+      feeRupees: String(feeRupees),
+    };
+
+    const order = await razorpay.orders.create({
+      amount: amountPaise,
+      currency: "INR",
+      receipt: makeReceipt(tenderId),
+      notes,
+    });
+
+    await TenderPayment.create({
+      tenderId,
+      quotationId,
+      rrUserId: req.user.id, // payer (transporter)
+      purpose,
+      razorpayOrderId: order.id,
+      amount: order.amount,
+      currency: order.currency,
+      status: "created",
+      notes,
+    });
+
+    return res.json({
+      feePercent: CONFIRM_ACCEPT_FEE_PERCENT,
+      keyId: process.env.RAZORPAY_KEY_ID,
+      orderId: order.id,
+      amount: order.amount,
+      currency: order.currency,
+      alreadyPaid: false,
+      reusedOrder: false,
+    });
+  } catch (err) {
+    console.error("createSelectionAcceptFeeOrder error:", err);
+    return res
+      .status(500)
+      .json({ message: "Could not create accept-fee order" });
+  }
+};
+
+export const verifySelectionAcceptFeePayment = async (req, res) => {
+  try {
+    if (!req.user?.id) return res.status(401).json({ message: "Unauthorized" });
+
+    const tenderId = req.params.id;
+    const { razorpay_order_id, razorpay_payment_id, razorpay_signature } =
+      req.body;
+
+    if (!razorpay_order_id || !razorpay_payment_id || !razorpay_signature) {
+      return res.status(400).json({ message: "Missing Razorpay fields" });
+    }
+
+    // verify signature
+    const expected = hmacSHA256(
+      process.env.RAZORPAY_KEY_SECRET,
+      `${razorpay_order_id}|${razorpay_payment_id}`,
+    );
+
+    if (expected !== razorpay_signature) {
+      return res.status(400).json({ message: "Invalid payment signature" });
+    }
+
+    const payRow = await TenderPayment.findOne({
+      razorpayOrderId: razorpay_order_id,
+      purpose: "selection_confirmation_fee",
+      rrUserId: req.user.id, // payer is transporter
+    });
+
+    if (!payRow)
+      return res.status(404).json({ message: "Payment order not found" });
+
+    if (String(payRow.tenderId) !== String(tenderId)) {
+      return res.status(400).json({ message: "Order does not match tender" });
+    }
+
+    const payment = await razorpay.payments.fetch(razorpay_payment_id);
+
+    payRow.razorpayPaymentId = razorpay_payment_id;
+    payRow.razorpaySignature = razorpay_signature;
+    payRow.status = payment.status === "captured" ? "captured" : "paid";
+    payRow.method = payment.method;
+    payRow.bank = payment.bank;
+    payRow.wallet = payment.wallet;
+    payRow.vpa = payment.vpa;
+    payRow.email = payment.email;
+    payRow.contact = payment.contact;
+    payRow.fee = payment.fee;
+    payRow.tax = payment.tax;
+    payRow.card = payment.card;
+    payRow.rawPayment = payment;
+    payRow.paidAt = new Date();
+    if (payment.status === "captured") payRow.capturedAt = new Date();
+
+    await payRow.save();
+
+    return res.json({
+      ok: true,
+      message: "Accept fee payment verified",
+      status: payRow.status,
+    });
+  } catch (err) {
+    console.error("verifySelectionAcceptFeePayment error:", err);
+    return res.status(500).json({ message: "Payment verification failed" });
   }
 };

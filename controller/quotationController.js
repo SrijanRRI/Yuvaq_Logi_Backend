@@ -43,6 +43,11 @@ export const submitQuotation = async (req, res) => {
       });
     }
 
+    // ✅ Fallback compatibility:
+    // if old docs have no soft/hard, treat hard = biddingEnd (no extension)
+    const softEnd = tender.biddingSoftEnd || tender.biddingEnd;
+    const hardEnd = tender.biddingHardEnd || tender.biddingEnd;
+
     // 🔹 Use tender.priceDifference (fallback to 30 if missing/invalid)
     const minDelta =
       Number.isFinite(Number(tender.priceDifference)) &&
@@ -153,9 +158,58 @@ export const submitQuotation = async (req, res) => {
     });
     await quotation.save();
 
-    // 7) Link quotation to tender
-    tender.quotations.push(quotation._id);
-    await tender.save();
+    // ✅ Link quotation to tender safely (no stale overwrite)
+    await Tender.updateOne(
+      { _id: tenderId },
+      { $push: { quotations: quotation._id } },
+    );
+
+    // ==========================================================
+    // ✅ SOFT CLOSE EXTENSION (only if hardEnd > current biddingEnd)
+    // Defaults (can be overridden via env):
+    // - if bid comes in last 5 mins => extend by 5 mins
+    // - but never beyond hardEnd
+    // ==========================================================
+    const EXT_WINDOW_MIN = Number(process.env.BID_EXT_WINDOW_MINUTES || 5);
+    const EXT_INC_MIN = Number(process.env.BID_EXT_INCREMENT_MINUTES || 5);
+
+    const EXT_WINDOW_MS = EXT_WINDOW_MIN * 60 * 1000;
+    const EXT_INC_MS = EXT_INC_MIN * 60 * 1000;
+
+    const currentEnd = new Date(tender.biddingEnd);
+    const currentEndMs = currentEnd.getTime();
+    const hardEndMs = new Date(hardEnd).getTime();
+    const nowMs = now.getTime();
+
+    const inLastWindow =
+      nowMs >= currentEndMs - EXT_WINDOW_MS && nowMs <= currentEndMs;
+
+    // can extend only if hardEnd is later than current end
+    if (inLastWindow && currentEndMs < hardEndMs) {
+      const nextEndMs = Math.min(currentEndMs + EXT_INC_MS, hardEndMs);
+      const nextEnd = new Date(nextEndMs);
+
+      // ✅ atomic: only extend if biddingEnd is still the same as we saw
+      await Tender.findOneAndUpdate(
+        { _id: tenderId, biddingEnd: tender.biddingEnd },
+        {
+          $set: { biddingEnd: nextEnd },
+          $push: {
+            biddingExtensions: {
+              at: now,
+              from: tender.biddingEnd,
+              to: nextEnd,
+              by: userId,
+              quotation: quotation._id,
+            },
+          },
+        },
+      );
+    }
+
+    // // 7) Link quotation to tender
+    // tender.quotations.push(quotation._id);
+    // await tender.save();
 
     return res.status(201).json({
       success: true,
