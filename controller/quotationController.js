@@ -74,6 +74,32 @@ export const submitQuotation = async (req, res) => {
     // }
     // =========================================================
 
+    // 2.5) Enforce: transporter must always quote LOWER than their previous quote (strictly)
+    const prevQuote = await Quotation.findOne({
+      tender: tenderId,
+      transportUser: userId,
+      phase: "normal",
+    })
+      .sort({ createdAt: -1 })
+      .select("price createdAt")
+      .lean();
+
+    if (prevQuote) {
+      // must be strictly less than previous quote
+      if (numericPrice >= Number(prevQuote.price)) {
+        return res.status(400).json({
+          success: false,
+          message:
+            "New quotation must be strictly lower than your previous quotation",
+          data: {
+            previousPrice: Number(prevQuote.price),
+            previousCreatedAt: prevQuote.createdAt,
+            yourPrice: numericPrice,
+          },
+        });
+      }
+    }
+
     // 3) Compute current L1 (lowest among each transporter's best price)
     const allQuotes = await Quotation.find({
       tender: tenderId,
