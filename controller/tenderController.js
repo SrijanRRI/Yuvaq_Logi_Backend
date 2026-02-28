@@ -1136,25 +1136,185 @@ export const getSingleTender = async (req, res) => {
 // ✅ 7. Delete Tender (by RR User)
 export const deleteTender = async (req, res) => {
   try {
-    const tender = await Tender.findById(req.params.id);
+    const tenderId = req.params.id;
+    const userId = req.user.id;
 
+    const { reason } = req.body || {};
+    const cleanReason = String(reason || "").trim();
+
+    if (!cleanReason) {
+      return res.status(400).json({
+        success: false,
+        message: "Reason is required to delete/cancel a tender.",
+      });
+    }
+
+    const tender = await Tender.findById(tenderId);
     if (!tender) {
       return res
         .status(404)
         .json({ success: false, message: "Tender not found" });
     }
 
-    if (tender.createdBy.toString() !== req.user.id) {
+    if (String(tender.createdBy) !== String(userId)) {
       return res.status(403).json({ success: false, message: "Unauthorized" });
     }
 
-    await Tender.findByIdAndDelete(req.params.id);
+    // Idempotent: already cancelled
+    if (String(tender.status).toLowerCase() === "cancelled") {
+      return res.status(200).json({
+        success: true,
+        message: "Tender already cancelled.",
+        data: tender,
+      });
+    }
 
-    res
-      .status(200)
-      .json({ success: true, message: "Tender deleted successfully" });
+    const now = new Date();
+
+    // ✅ Rule 1: only before biddingStart
+    const biddingStart = tender?.biddingStart
+      ? new Date(tender.biddingStart)
+      : null;
+    if (biddingStart && now.getTime() >= biddingStart.getTime()) {
+      return res.status(409).json({
+        success: false,
+        code: "BIDDING_ALREADY_STARTED",
+        message: "Tender cannot be deleted once bidding has started.",
+      });
+    }
+
+    // ✅ Rule 2: max 3 cancellations per day (IST)
+    const tz = "Asia/Kolkata";
+    const dayStart = moment().tz(tz).startOf("day").toDate();
+    const dayEnd = moment().tz(tz).endOf("day").toDate();
+
+    const todayCancelledCount = await Tender.countDocuments({
+      createdBy: userId,
+      status: "cancelled",
+      cancelledAt: { $gte: dayStart, $lte: dayEnd },
+    });
+
+    if (todayCancelledCount >= 3) {
+      return res.status(429).json({
+        success: false,
+        code: "DAILY_DELETE_LIMIT",
+        message:
+          "Daily delete limit reached (3/day). Please contact support with a genuine reason to delete more tenders.",
+      });
+    }
+
+    // ✅ Soft-delete (cancel)
+    tender.status = "cancelled";
+    tender.cancelledAt = now;
+    tender.cancelledBy = userId;
+    tender.cancelledReason = cleanReason;
+
+    await tender.save();
+
+    // ✅ Email all selected transporters
+    const transporterIds = Array.isArray(tender.transporters)
+      ? tender.transporters
+      : [];
+    const transporters = await User.find({ _id: { $in: transporterIds } })
+      .select("name email")
+      .lean();
+
+    const pickupText = tender.pickup
+      ? [
+          tender.pickup.address,
+          tender.pickup.city,
+          tender.pickup.district,
+          tender.pickup.state,
+          tender.pickup.pincode,
+        ]
+          .filter(Boolean)
+          .join(", ")
+      : "-";
+
+    const dropText = tender.drop
+      ? [
+          tender.drop.address,
+          tender.drop.city,
+          tender.drop.district,
+          tender.drop.state,
+          tender.drop.pincode,
+        ]
+          .filter(Boolean)
+          .join(", ")
+      : "-";
+
+    const biddingStartIst = tender.biddingStart
+      ? moment(tender.biddingStart).tz(tz).format("DD MMM YYYY, hh:mm A")
+      : "-";
+
+    let sent = 0;
+    let failed = 0;
+
+    for (const tr of transporters) {
+      if (!tr?.email) continue;
+
+      try {
+        await sendMail({
+          to: tr.email,
+          subject: "❌ Tender Cancelled — Please Ignore (LogiQ)",
+          html: `
+            <div style="font-family:Arial;line-height:1.5">
+              <h2 style="margin:0 0 10px;color:#dc2626">Tender Cancelled</h2>
+              <p>Hello <b>${tr.name || "Transporter"}</b>,</p>
+
+              <p>
+                This is to inform you that the tender has been <b>cancelled</b> by the creator
+                <b>before bidding started</b>.
+              </p>
+
+              <table cellpadding="8" cellspacing="0" width="100%" style="border:1px solid #e5e7eb;border-radius:10px;">
+                <tr style="background:#f8fafc;">
+                  <td style="font-weight:bold;width:170px;">Project</td>
+                  <td>${tender.projectName || "-"} (${tender.projectCode || "-"})</td>
+                </tr>
+                <tr>
+                  <td style="font-weight:bold;">Purchase Order</td>
+                  <td>${tender.purchaseOrder || "-"}</td>
+                </tr>
+                <tr style="background:#f8fafc;">
+                  <td style="font-weight:bold;">Pickup</td>
+                  <td>${pickupText}</td>
+                </tr>
+                <tr>
+                  <td style="font-weight:bold;">Drop</td>
+                  <td>${dropText}</td>
+                </tr>
+                <tr style="background:#f8fafc;">
+                  <td style="font-weight:bold;">Bidding Start</td>
+                  <td>${biddingStartIst}</td>
+                </tr>
+              </table>
+
+              <p style="margin-top:14px;"><b>Cancellation Reason:</b> ${cleanReason}</p>
+
+              <p style="margin-top:18px;color:#6b7280;font-size:12px">
+                This is an automated message from LogiQ.
+              </p>
+            </div>
+          `,
+        });
+
+        sent += 1;
+      } catch (e) {
+        failed += 1;
+        console.error("cancel mail failed:", tr.email, e?.message);
+      }
+    }
+
+    return res.status(200).json({
+      success: true,
+      message: "Tender cancelled successfully.",
+      data: tender,
+      mail: { total: transporters.length, sent, failed },
+      limits: { todayCancelledCount: todayCancelledCount + 1, dailyLimit: 3 },
+    });
   } catch (error) {
-    res.status(500).json({ success: false, message: error.message });
+    return res.status(500).json({ success: false, message: error.message });
   }
 };
 

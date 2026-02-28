@@ -84,7 +84,7 @@ router.post("/:id/selection/accept/payment/verify", jwtAuth, subscriptionGate, v
 router.post("/:id/post-bid/start", jwtAuth, subscriptionGate, startPostBidNegotiation);
 
 //  7. Delete a tender (by RR user)
-router.delete("/:id", jwtAuth, deleteTender);
+router.delete("/:id", jwtAuth, subscriptionGate, deleteTender);
 router.get("/:id", jwtAuth, subscriptionGate, getSingleTender);
 
 

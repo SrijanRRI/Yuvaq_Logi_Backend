@@ -113,7 +113,7 @@ const tenderSchema = new mongoose.Schema(
 
     status: {
       type: String,
-      enum: ["draft", "open", "quoted", "finalized", "closed" , "cancelled"],
+      enum: ["draft", "open", "quoted", "finalized", "closed", "cancelled"],
       default: "draft",
     },
 
@@ -197,6 +197,10 @@ const tenderSchema = new mongoose.Schema(
     projectCode: { type: String, required: true },
     purchaseOrder: { type: String, required: true, trim: true },
     projectRemark: { type: String, default: "", trim: true },
+
+    cancelledAt: { type: Date, default: null },
+    cancelledBy: { type: Schema.Types.ObjectId, ref: "user", default: null },
+    cancelledReason: { type: String, default: "", trim: true },
 
     selection: {
       status: {
