@@ -9,6 +9,7 @@ import userModel from "../models/userSchema.js";
 import moment from "moment-timezone";
 import { sendWhatsAppTemplate } from "../utils/sendWhatsapp.js";
 import TenderPayment from "../models/TenderPayment.js";
+import { notifyTenderTransportersInternal } from "../services/tenderNotify.service.js";
 
 function pushSelectionHistory(tender, entry) {
   tender.selectionHistory = tender.selectionHistory || [];
@@ -231,7 +232,7 @@ export const createTender = async (req, res) => {
       closeDate: utcCloseDate,
       biddingStart: utcBiddingStart,
       biddingEnd: utcBiddingSoftEnd,
-      
+
       //  store soft/hard explicitly
       biddingSoftEnd: utcBiddingSoftEnd,
       biddingHardEnd: utcBiddingHardEnd,
@@ -246,6 +247,14 @@ export const createTender = async (req, res) => {
       minBidAmount: minAmt,
       maxBidAmount: maxAmt,
       maxBidUnit: String(maxBidUnit),
+
+      status: "open",
+      publishedAt: new Date(),
+      draftSubmitAt: null,
+      draftCancelledAt: null,
+      draftFinalizedAt: null,
+      draftProcessingAt: null,
+      lastEditedAt: null,
     };
 
     // only set if provided so Mongoose default can apply otherwise
@@ -1445,149 +1454,161 @@ export const getMyQuotationPosition = async (req, res) => {
  *  - transporterIds?: string[]  // override: notify these users only (subset)
  *  - dryRun?: boolean           // if true, nothing is sent; payload preview returned
  */
+// export const notifyTenderTransporters = async (req, res) => {
+//   try {
+//     const { id } = req.params;
+
+//     if (!mongoose.isValidObjectId(id)) {
+//       return res
+//         .status(400)
+//         .json({ success: false, message: "Invalid tender id" });
+//     }
+
+//     const tender = await Tender.findById(id).lean();
+//     if (!tender) {
+//       return res
+//         .status(404)
+//         .json({ success: false, message: "Tender not found" });
+//     }
+
+//     // Ensure tender has transporter IDs
+//     const tenderTransporters = Array.isArray(tender.transporters)
+//       ? tender.transporters
+//       : [];
+//     if (tenderTransporters.length === 0) {
+//       return res.status(400).json({
+//         success: false,
+//         message: "No transporters attached to this tender",
+//       });
+//     }
+
+//     // Optional override: only notify given transporterIds (must be subset)
+//     const { transporterIds = [], dryRun = false } = req.body || {};
+//     let targetIds = tenderTransporters.map(String);
+
+//     if (Array.isArray(transporterIds) && transporterIds.length > 0) {
+//       const override = transporterIds.filter((x) =>
+//         targetIds.includes(String(x)),
+//       );
+//       if (override.length === 0) {
+//         return res.status(400).json({
+//           success: false,
+//           message: "Provided transporterIds are not part of this tender",
+//         });
+//       }
+//       targetIds = override;
+//     }
+
+//     // Load users
+//     const users = await User.find({
+//       _id: { $in: targetIds.map((x) => new mongoose.Types.ObjectId(x)) },
+//     })
+//       .select("_id name phone")
+//       .lean();
+
+//     const timezone = "Asia/Kolkata";
+
+//     // Build template values from tender
+//     const values = {
+//       dispatch_location: `${tender.dispatchLocation} (${tender.pincode || ""})`,
+//       delivery_from: moment(tender?.deliveryWindow?.from)
+//         .tz(timezone)
+//         .format("DD MMM YYYY"),
+//       delivery_to: moment(tender?.deliveryWindow?.to)
+//         .tz(timezone)
+//         .format("DD MMM YYYY"),
+//       start_datetime: moment(tender?.biddingStart)
+//         .tz(timezone)
+//         .format("DD MMM YYYY, hh:mm A"),
+//       end_datetime: moment(tender?.biddingEnd)
+//         .tz(timezone)
+//         .format("DD MMM YYYY, hh:mm A"),
+//       // You can add more fields if your template has them:
+//       // project_name: tender.projectName,
+//       // project_code: tender.projectCode,
+//       // purchase_order: tender.purchaseOrder,
+//     };
+
+//     // If dryRun: return preview without sending
+//     if (dryRun) {
+//       return res.json({
+//         success: true,
+//         dryRun: true,
+//         templatePreview: values,
+//         recipientsPreview: users.map((u) => ({
+//           id: u._id,
+//           name: u.name,
+//           phone: u.phone || null,
+//         })),
+//       });
+//     }
+
+//     // Send to users who have phone numbers
+//     const results = [];
+//     let sent = 0;
+//     let skipped = 0;
+
+//     for (const u of users) {
+//       if (!u.phone) {
+//         results.push({
+//           userId: u._id,
+//           name: u.name || "",
+//           status: "skipped",
+//           reason: "missing_phone",
+//         });
+//         skipped += 1;
+//         continue;
+//       }
+//       try {
+//         await sendWhatsAppTemplate(u.phone, values);
+//         results.push({
+//           userId: u._id,
+//           name: u.name || "",
+//           phone: u.phone,
+//           status: "sent",
+//         });
+//         sent += 1;
+//       } catch (e) {
+//         results.push({
+//           userId: u._id,
+//           name: u.name || "",
+//           phone: u.phone,
+//           status: "failed",
+//           error: e.message,
+//         });
+//       }
+//     }
+
+//     return res.json({
+//       success: true,
+//       tenderId: id,
+//       counts: {
+//         total: users.length,
+//         sent,
+//         skipped,
+//         failed: results.filter((r) => r.status === "failed").length,
+//       },
+//       valuesUsed: values,
+//       results,
+//     });
+//   } catch (err) {
+//     console.error("notifyTenderTransporters error:", err);
+//     return res.status(500).json({
+//       success: false,
+//       message: "Failed to send WhatsApp notifications",
+//     });
+//   }
+// };
+
 export const notifyTenderTransporters = async (req, res) => {
   try {
-    const { id } = req.params;
-
-    if (!mongoose.isValidObjectId(id)) {
-      return res
-        .status(400)
-        .json({ success: false, message: "Invalid tender id" });
-    }
-
-    const tender = await Tender.findById(id).lean();
-    if (!tender) {
-      return res
-        .status(404)
-        .json({ success: false, message: "Tender not found" });
-    }
-
-    // Ensure tender has transporter IDs
-    const tenderTransporters = Array.isArray(tender.transporters)
-      ? tender.transporters
-      : [];
-    if (tenderTransporters.length === 0) {
-      return res.status(400).json({
-        success: false,
-        message: "No transporters attached to this tender",
-      });
-    }
-
-    // Optional override: only notify given transporterIds (must be subset)
-    const { transporterIds = [], dryRun = false } = req.body || {};
-    let targetIds = tenderTransporters.map(String);
-
-    if (Array.isArray(transporterIds) && transporterIds.length > 0) {
-      const override = transporterIds.filter((x) =>
-        targetIds.includes(String(x)),
-      );
-      if (override.length === 0) {
-        return res.status(400).json({
-          success: false,
-          message: "Provided transporterIds are not part of this tender",
-        });
-      }
-      targetIds = override;
-    }
-
-    // Load users
-    const users = await User.find({
-      _id: { $in: targetIds.map((x) => new mongoose.Types.ObjectId(x)) },
-    })
-      .select("_id name phone")
-      .lean();
-
-    const timezone = "Asia/Kolkata";
-
-    // Build template values from tender
-    const values = {
-      dispatch_location: `${tender.dispatchLocation} (${tender.pincode || ""})`,
-      delivery_from: moment(tender?.deliveryWindow?.from)
-        .tz(timezone)
-        .format("DD MMM YYYY"),
-      delivery_to: moment(tender?.deliveryWindow?.to)
-        .tz(timezone)
-        .format("DD MMM YYYY"),
-      start_datetime: moment(tender?.biddingStart)
-        .tz(timezone)
-        .format("DD MMM YYYY, hh:mm A"),
-      end_datetime: moment(tender?.biddingEnd)
-        .tz(timezone)
-        .format("DD MMM YYYY, hh:mm A"),
-      // You can add more fields if your template has them:
-      // project_name: tender.projectName,
-      // project_code: tender.projectCode,
-      // purchase_order: tender.purchaseOrder,
-    };
-
-    // If dryRun: return preview without sending
-    if (dryRun) {
-      return res.json({
-        success: true,
-        dryRun: true,
-        templatePreview: values,
-        recipientsPreview: users.map((u) => ({
-          id: u._id,
-          name: u.name,
-          phone: u.phone || null,
-        })),
-      });
-    }
-
-    // Send to users who have phone numbers
-    const results = [];
-    let sent = 0;
-    let skipped = 0;
-
-    for (const u of users) {
-      if (!u.phone) {
-        results.push({
-          userId: u._id,
-          name: u.name || "",
-          status: "skipped",
-          reason: "missing_phone",
-        });
-        skipped += 1;
-        continue;
-      }
-      try {
-        await sendWhatsAppTemplate(u.phone, values);
-        results.push({
-          userId: u._id,
-          name: u.name || "",
-          phone: u.phone,
-          status: "sent",
-        });
-        sent += 1;
-      } catch (e) {
-        results.push({
-          userId: u._id,
-          name: u.name || "",
-          phone: u.phone,
-          status: "failed",
-          error: e.message,
-        });
-      }
-    }
-
-    return res.json({
-      success: true,
-      tenderId: id,
-      counts: {
-        total: users.length,
-        sent,
-        skipped,
-        failed: results.filter((r) => r.status === "failed").length,
-      },
-      valuesUsed: values,
-      results,
-    });
-  } catch (err) {
-    console.error("notifyTenderTransporters error:", err);
-    return res.status(500).json({
-      success: false,
-      message: "Failed to send WhatsApp notifications",
-    });
+    const out = await notifyTenderTransportersInternal(
+      req.params.id,
+      req.body || {},
+    );
+    return res.json(out);
+  } catch (e) {
+    return res.status(500).json({ success: false, message: e.message });
   }
 };
 

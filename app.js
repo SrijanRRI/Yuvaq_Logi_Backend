@@ -14,12 +14,15 @@ import tenderRouter from './routes/tenderRouter.js';
 import cookieParser from 'cookie-parser'
 import cors from 'cors';
 import autoEndPostBid from './cron/autoEndPostBid.js';
+import startFinalizeDraftTenders from './cron/finalizeDraftTenders.js';
 
 const app = express();
 
 // connectToDb()
 
+// Cron : 
 autoEndPostBid();
+startFinalizeDraftTenders();
 
 app.use(cors({ origin: [process.env.CLIENT_URL,"http://localhost:5173" , "http://192.168.13.86:85" , "https://logiq.yuvaq.com"] , credentials: true }));
 

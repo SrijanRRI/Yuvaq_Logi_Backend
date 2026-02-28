@@ -113,9 +113,17 @@ const tenderSchema = new mongoose.Schema(
 
     status: {
       type: String,
-      enum: ["open", "quoted", "finalized", "closed"],
-      default: "open",
+      enum: ["draft", "open", "quoted", "finalized", "closed" , "cancelled"],
+      default: "draft",
     },
+
+    draftSubmitAt: { type: Date, default: null }, // when it should publish
+    draftCancelledAt: { type: Date, default: null },
+    draftFinalizedAt: { type: Date, default: null },
+
+    draftProcessingAt: { type: Date, default: null }, // lock to avoid double finalize
+    publishedAt: { type: Date, default: null }, // when it became "open"
+    lastEditedAt: { type: Date, default: null },
 
     transporters: [
       {
@@ -290,5 +298,7 @@ tenderSchema.index({ "vehicleRequirements.subCategory": 1 });
 
 tenderSchema.index({ biddingHardEnd: 1 });
 tenderSchema.index({ biddingSoftEnd: 1 });
+
+tenderSchema.index({ status: 1, draftSubmitAt: 1 });
 
 export default mongoose.model("Tender", tenderSchema);
