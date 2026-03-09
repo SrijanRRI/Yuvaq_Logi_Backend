@@ -88,8 +88,16 @@ export const login = async (req, res) => {
 };
 
 export const signup = async (req, res) => {
-  const { name, email, phone, password, confirmPassword, role, gstn } =
-    req.body;
+  const {
+    name,
+    email,
+    phone,
+    password,
+    confirmPassword,
+    role,
+    gstn,
+    transportId,
+  } = req.body;
 
   if (!name || !email || !phone || !password || !confirmPassword) {
     return res.status(400).json({
@@ -120,11 +128,19 @@ export const signup = async (req, res) => {
     });
   }
 
-  // Business rule: transportUser must provide GSTN
-  if ((role || "user") === "transportUser" && !gstn) {
+  const finalRole = role || "user";
+
+  if (finalRole === "transportUser" && !gstn) {
     return res.status(400).json({
       success: false,
       message: "GSTIN is required for transport users",
+    });
+  }
+
+  if (finalRole === "transportUser" && !transportId) {
+    return res.status(400).json({
+      success: false,
+      message: "Transport ID is required for transport users",
     });
   }
 
@@ -134,10 +150,12 @@ export const signup = async (req, res) => {
       email,
       phone,
       password,
-      role: role || "user",
-      // only set gstn when provided AND role is transportUser
-      ...(role === "transportUser" && gstn
+      role: finalRole,
+      ...(finalRole === "transportUser" && gstn
         ? { gstn: gstn.trim().toUpperCase() }
+        : {}),
+      ...(finalRole === "transportUser" && transportId
+        ? { transportId: transportId.trim().toUpperCase() }
         : {}), // schema handles regex validation
     });
 
