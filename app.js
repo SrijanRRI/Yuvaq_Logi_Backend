@@ -10,6 +10,7 @@ import webhookRouter from "./routes/webhookRouter.js";
 import vehicleCatalogRouter from "./routes/vehicleCatalogRouter.js"
 import "./cron/autoCloseTenders.js";
 import tenderRouter from './routes/tenderRouter.js';
+import hsnRouter from "./routes/hsnRouter.js";
 // import connectToDb from './config/dbConn.js';
 import cookieParser from 'cookie-parser'
 import cors from 'cors';
@@ -42,6 +43,7 @@ app.use('/tenders',tenderRouter)
 app.use('/quotation', quotationRouter);
 app.use('/shipment-planning',shipmentRouter)
 app.use("/webhooks", webhookRouter);
+app.use("/hsn", hsnRouter);
 
 app.use("/vehicle", vehicleCatalogRouter);
 

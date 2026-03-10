@@ -5,6 +5,7 @@
   "type": "module",
   "scripts": {
     "build": "webpack --config webpack.config.mjs",
+    "seed:hsn": "node scripts/seedHsnMaster.js",
     "test": "echo \"Error: no test specified\" && exit 1",
     "start": "node dist/server.cjs",
     "dev": "nodemon index.js"

@@ -10,6 +10,7 @@ import moment from "moment-timezone";
 import { sendWhatsAppTemplate } from "../utils/sendWhatsapp.js";
 import TenderPayment from "../models/TenderPayment.js";
 import { notifyTenderTransportersInternal } from "../services/tenderNotify.service.js";
+import { buildTenderPayloadFromBody } from "../services/tenderPayload.service.js";
 
 function pushSelectionHistory(tender, entry) {
   tender.selectionHistory = tender.selectionHistory || [];
@@ -24,230 +25,260 @@ function pushSelectionHistory(tender, entry) {
   });
 }
 
+// export const createTender = async (req, res) => {
+//   try {
+//     const {
+//       shipmentPlanId,
+//       pickup,
+//       drop,
+//       vehicleRequirements,
+//       transporters,
+//       remarks,
+//       closeDate,
+//       deliveryWindow,
+//       biddingStart,
+//       biddingEnd, // (Soft End for now)
+//       biddingHardEnd, // ✅ NEW (optional for now)
+//       totalWeight,
+//       totalQuantity,
+//       projectName,
+//       projectCode,
+//       purchaseOrder,
+//       projectRemark,
+//       priceDifference, // <-- accept from frontend
+//       maxBidAmount,
+//       maxBidUnit,
+//       minBidAmount,
+//     } = req.body;
+
+//     // basic validations
+//     if (!projectName || !projectCode || !purchaseOrder) {
+//       return res.status(400).json({
+//         success: false,
+//         message: "Project name, code and PO are required",
+//       });
+//     }
+//     if (!biddingStart || !biddingEnd) {
+//       return res.status(400).json({
+//         success: false,
+//         message: "Bidding start and end time are required",
+//       });
+//     }
+//     if (!deliveryWindow?.from || !deliveryWindow?.to) {
+//       return res.status(400).json({
+//         success: false,
+//         message: "Delivery window (from and to dates) is required",
+//       });
+//     }
+
+//     if (!pickup?.pincode || !pickup?.address) {
+//       return res.status(400).json({
+//         success: false,
+//         message: "Pickup pincode and address are required",
+//       });
+//     }
+
+//     if (!drop?.pincode || !drop?.address) {
+//       return res.status(400).json({
+//         success: false,
+//         message: "Drop pincode and address are required",
+//       });
+//     }
+
+//     if (
+//       !vehicleRequirements ||
+//       !Array.isArray(vehicleRequirements) ||
+//       vehicleRequirements.length === 0
+//     ) {
+//       return res.status(400).json({
+//         success: false,
+//         message: "At least one vehicle requirement is required",
+//       });
+//     }
+
+//     // optional shipmentPlanId
+//     let shipmentPlanRef = null;
+//     if (shipmentPlanId) {
+//       if (!mongoose.isValidObjectId(shipmentPlanId)) {
+//         return res
+//           .status(400)
+//           .json({ success: false, message: "Invalid shipmentPlanId" });
+//       }
+//       shipmentPlanRef = shipmentPlanId;
+//     }
+
+//     // validate priceDifference if provided
+//     let priceDifferenceValue;
+//     if (
+//       priceDifference !== undefined &&
+//       priceDifference !== null &&
+//       priceDifference !== ""
+//     ) {
+//       const n = Number(priceDifference);
+//       if (!Number.isFinite(n)) {
+//         return res.status(400).json({
+//           success: false,
+//           message: "priceDifference must be a valid number",
+//         });
+//       }
+
+//       priceDifferenceValue = n;
+//     }
+
+//     // time conversions (IST → UTC)
+//     const timezone = "Asia/Kolkata";
+//     const utcBiddingStart = moment.tz(biddingStart, timezone).utc().toDate();
+//     const utcBiddingEnd = moment.tz(biddingEnd, timezone).utc().toDate();
+
+//     const utcBiddingSoftEnd = utcBiddingEnd;
+
+//     // ✅ if frontend doesn't send biddingHardEnd, hard = soft (no extension; same as today)
+//     const utcBiddingHardEnd = biddingHardEnd
+//       ? moment.tz(biddingHardEnd, timezone).utc().toDate()
+//       : utcBiddingEnd;
+
+//     // ✅ validate hard end >= soft end (only when provided)
+//     if (utcBiddingHardEnd.getTime() < utcBiddingSoftEnd.getTime()) {
+//       return res.status(400).json({
+//         success: false,
+//         message: "biddingHardEnd must be >= biddingEnd (soft end)",
+//       });
+//     }
+
+//     const utcDeliveryFrom = moment
+//       .tz(deliveryWindow.from, timezone)
+//       .utc()
+//       .toDate();
+//     const utcDeliveryTo = moment.tz(deliveryWindow.to, timezone).utc().toDate();
+
+//     let utcCloseDate = null;
+//     if (closeDate) {
+//       const [year, month, day] = closeDate.split("-").map(Number);
+//       utcCloseDate = new Date(Date.UTC(year, month - 1, day));
+//     }
+
+//     // normalize vehicle requirements
+//     const normalizedVehicles = vehicleRequirements.map((v) => ({
+//       vehicleId: v.vehicleId,
+//       category: String(v.category || "").trim(),
+//       subCategory: String(v.subCategory || "").trim(),
+//       quantity: Number(v.quantity || 1),
+//     }));
+
+//     // validate each vehicle row
+//     for (const v of normalizedVehicles) {
+//       if (!v.vehicleId || !mongoose.isValidObjectId(v.vehicleId)) {
+//         return res.status(400).json({
+//           success: false,
+//           message: "Valid vehicleId is required for each vehicle requirement",
+//         });
+//       }
+
+//       if (!v.category || !v.subCategory) {
+//         return res.status(400).json({
+//           success: false,
+//           message:
+//             "Each vehicle requirement must include category and subCategory",
+//         });
+//       }
+//       if (!Number.isFinite(v.quantity) || v.quantity < 1) {
+//         return res.status(400).json({
+//           success: false,
+//           message: "Vehicle quantity must be a number >= 1",
+//         });
+//       }
+//     }
+
+//     // ✅ validate bid limits
+//     const minAmt = Number(minBidAmount);
+//     const maxAmt = Number(maxBidAmount);
+
+//     if (!Number.isFinite(maxAmt) || maxAmt <= 0) {
+//       return res.status(400).json({
+//         success: false,
+//         message: "maxBidAmount must be a valid number > 0",
+//       });
+//     }
+
+//     if (!Number.isFinite(minAmt) || minAmt < 0) {
+//       return res.status(400).json({
+//         success: false,
+//         message: "minBidAmount must be a valid number >= 0",
+//       });
+//     }
+
+//     const allowedUnits = ["Per MT", "Per Tender"];
+//     if (!maxBidUnit || !allowedUnits.includes(String(maxBidUnit))) {
+//       return res.status(400).json({
+//         success: false,
+//         message: "maxBidUnit is required and must be Per MT or Per Tender",
+//       });
+//     }
+
+//     if (minAmt > maxAmt) {
+//       return res.status(400).json({
+//         success: false,
+//         message: "minBidAmount cannot be greater than maxBidAmount",
+//       });
+//     }
+
+//     const tenderPayload = {
+//       createdBy: req.user.id,
+//       shipmentPlan: shipmentPlanRef || null,
+//       pickup,
+//       drop,
+//       vehicleRequirements: normalizedVehicles,
+//       transporters,
+//       remarks: remarks || "",
+//       closeDate: utcCloseDate,
+//       biddingStart: utcBiddingStart,
+//       biddingEnd: utcBiddingSoftEnd,
+
+//       //  store soft/hard explicitly
+//       biddingSoftEnd: utcBiddingSoftEnd,
+//       biddingHardEnd: utcBiddingHardEnd,
+
+//       deliveryWindow: { from: utcDeliveryFrom, to: utcDeliveryTo },
+//       totalWeight,
+//       totalQuantity,
+//       projectName,
+//       projectCode,
+//       purchaseOrder,
+//       projectRemark: projectRemark || "",
+//       minBidAmount: minAmt,
+//       maxBidAmount: maxAmt,
+//       maxBidUnit: String(maxBidUnit),
+
+//       status: "open",
+//       publishedAt: new Date(),
+//       draftSubmitAt: null,
+//       draftCancelledAt: null,
+//       draftFinalizedAt: null,
+//       draftProcessingAt: null,
+//       lastEditedAt: null,
+//     };
+
+//     // only set if provided so Mongoose default can apply otherwise
+//     if (priceDifferenceValue !== undefined) {
+//       tenderPayload.priceDifference = priceDifferenceValue;
+//     }
+
+//     const tender = new Tender(tenderPayload);
+//     await tender.save();
+
+//     res.status(201).json({ success: true, data: tender });
+//   } catch (error) {
+//     console.error("Tender creation failed:", error);
+//     res.status(500).json({ success: false, message: error.message });
+//   }
+// };
+
 export const createTender = async (req, res) => {
   try {
-    const {
-      shipmentPlanId,
-      pickup,
-      drop,
-      vehicleRequirements,
-      transporters,
-      remarks,
-      closeDate,
-      deliveryWindow,
-      biddingStart,
-      biddingEnd, // (Soft End for now)
-      biddingHardEnd, // ✅ NEW (optional for now)
-      totalWeight,
-      totalQuantity,
-      projectName,
-      projectCode,
-      purchaseOrder,
-      projectRemark,
-      priceDifference, // <-- accept from frontend
-      maxBidAmount,
-      maxBidUnit,
-      minBidAmount,
-    } = req.body;
+    const payload = buildTenderPayloadFromBody(req.body, req.user.id);
 
-    // basic validations
-    if (!projectName || !projectCode || !purchaseOrder) {
-      return res.status(400).json({
-        success: false,
-        message: "Project name, code and PO are required",
-      });
-    }
-    if (!biddingStart || !biddingEnd) {
-      return res.status(400).json({
-        success: false,
-        message: "Bidding start and end time are required",
-      });
-    }
-    if (!deliveryWindow?.from || !deliveryWindow?.to) {
-      return res.status(400).json({
-        success: false,
-        message: "Delivery window (from and to dates) is required",
-      });
-    }
-
-    if (!pickup?.pincode || !pickup?.address) {
-      return res.status(400).json({
-        success: false,
-        message: "Pickup pincode and address are required",
-      });
-    }
-
-    if (!drop?.pincode || !drop?.address) {
-      return res.status(400).json({
-        success: false,
-        message: "Drop pincode and address are required",
-      });
-    }
-
-    if (
-      !vehicleRequirements ||
-      !Array.isArray(vehicleRequirements) ||
-      vehicleRequirements.length === 0
-    ) {
-      return res.status(400).json({
-        success: false,
-        message: "At least one vehicle requirement is required",
-      });
-    }
-
-    // optional shipmentPlanId
-    let shipmentPlanRef = null;
-    if (shipmentPlanId) {
-      if (!mongoose.isValidObjectId(shipmentPlanId)) {
-        return res
-          .status(400)
-          .json({ success: false, message: "Invalid shipmentPlanId" });
-      }
-      shipmentPlanRef = shipmentPlanId;
-    }
-
-    // validate priceDifference if provided
-    let priceDifferenceValue;
-    if (
-      priceDifference !== undefined &&
-      priceDifference !== null &&
-      priceDifference !== ""
-    ) {
-      const n = Number(priceDifference);
-      if (!Number.isFinite(n)) {
-        return res.status(400).json({
-          success: false,
-          message: "priceDifference must be a valid number",
-        });
-      }
-
-      priceDifferenceValue = n;
-    }
-
-    // time conversions (IST → UTC)
-    const timezone = "Asia/Kolkata";
-    const utcBiddingStart = moment.tz(biddingStart, timezone).utc().toDate();
-    const utcBiddingEnd = moment.tz(biddingEnd, timezone).utc().toDate();
-
-    const utcBiddingSoftEnd = utcBiddingEnd;
-
-    // ✅ if frontend doesn't send biddingHardEnd, hard = soft (no extension; same as today)
-    const utcBiddingHardEnd = biddingHardEnd
-      ? moment.tz(biddingHardEnd, timezone).utc().toDate()
-      : utcBiddingEnd;
-
-    // ✅ validate hard end >= soft end (only when provided)
-    if (utcBiddingHardEnd.getTime() < utcBiddingSoftEnd.getTime()) {
-      return res.status(400).json({
-        success: false,
-        message: "biddingHardEnd must be >= biddingEnd (soft end)",
-      });
-    }
-
-    const utcDeliveryFrom = moment
-      .tz(deliveryWindow.from, timezone)
-      .utc()
-      .toDate();
-    const utcDeliveryTo = moment.tz(deliveryWindow.to, timezone).utc().toDate();
-
-    let utcCloseDate = null;
-    if (closeDate) {
-      const [year, month, day] = closeDate.split("-").map(Number);
-      utcCloseDate = new Date(Date.UTC(year, month - 1, day));
-    }
-
-    // normalize vehicle requirements
-    const normalizedVehicles = vehicleRequirements.map((v) => ({
-      vehicleId: v.vehicleId,
-      category: String(v.category || "").trim(),
-      subCategory: String(v.subCategory || "").trim(),
-      quantity: Number(v.quantity || 1),
-    }));
-
-    // validate each vehicle row
-    for (const v of normalizedVehicles) {
-      if (!v.vehicleId || !mongoose.isValidObjectId(v.vehicleId)) {
-        return res.status(400).json({
-          success: false,
-          message: "Valid vehicleId is required for each vehicle requirement",
-        });
-      }
-
-      if (!v.category || !v.subCategory) {
-        return res.status(400).json({
-          success: false,
-          message:
-            "Each vehicle requirement must include category and subCategory",
-        });
-      }
-      if (!Number.isFinite(v.quantity) || v.quantity < 1) {
-        return res.status(400).json({
-          success: false,
-          message: "Vehicle quantity must be a number >= 1",
-        });
-      }
-    }
-
-    // ✅ validate bid limits
-    const minAmt = Number(minBidAmount);
-    const maxAmt = Number(maxBidAmount);
-
-    if (!Number.isFinite(maxAmt) || maxAmt <= 0) {
-      return res.status(400).json({
-        success: false,
-        message: "maxBidAmount must be a valid number > 0",
-      });
-    }
-
-    if (!Number.isFinite(minAmt) || minAmt < 0) {
-      return res.status(400).json({
-        success: false,
-        message: "minBidAmount must be a valid number >= 0",
-      });
-    }
-
-    const allowedUnits = ["Per MT", "Per Tender"];
-    if (!maxBidUnit || !allowedUnits.includes(String(maxBidUnit))) {
-      return res.status(400).json({
-        success: false,
-        message: "maxBidUnit is required and must be Per MT or Per Tender",
-      });
-    }
-
-    if (minAmt > maxAmt) {
-      return res.status(400).json({
-        success: false,
-        message: "minBidAmount cannot be greater than maxBidAmount",
-      });
-    }
-
-    const tenderPayload = {
-      createdBy: req.user.id,
-      shipmentPlan: shipmentPlanRef || null,
-      pickup,
-      drop,
-      vehicleRequirements: normalizedVehicles,
-      transporters,
-      remarks: remarks || "",
-      closeDate: utcCloseDate,
-      biddingStart: utcBiddingStart,
-      biddingEnd: utcBiddingSoftEnd,
-
-      //  store soft/hard explicitly
-      biddingSoftEnd: utcBiddingSoftEnd,
-      biddingHardEnd: utcBiddingHardEnd,
-
-      deliveryWindow: { from: utcDeliveryFrom, to: utcDeliveryTo },
-      totalWeight,
-      totalQuantity,
-      projectName,
-      projectCode,
-      purchaseOrder,
-      projectRemark: projectRemark || "",
-      minBidAmount: minAmt,
-      maxBidAmount: maxAmt,
-      maxBidUnit: String(maxBidUnit),
-
+    const tender = new Tender({
+      ...payload,
       status: "open",
       publishedAt: new Date(),
       draftSubmitAt: null,
@@ -255,20 +286,19 @@ export const createTender = async (req, res) => {
       draftFinalizedAt: null,
       draftProcessingAt: null,
       lastEditedAt: null,
-    };
+    });
 
-    // only set if provided so Mongoose default can apply otherwise
-    if (priceDifferenceValue !== undefined) {
-      tenderPayload.priceDifference = priceDifferenceValue;
-    }
-
-    const tender = new Tender(tenderPayload);
     await tender.save();
 
-    res.status(201).json({ success: true, data: tender });
+    return res.status(201).json({
+      success: true,
+      data: tender,
+    });
   } catch (error) {
     console.error("Tender creation failed:", error);
-    res.status(500).json({ success: false, message: error.message });
+    return res
+      .status(error?.status || 500)
+      .json({ success: false, message: error.message });
   }
 };
 
@@ -425,23 +455,30 @@ export const finalizeTender = async (req, res) => {
     const materialsHtml =
       Array.isArray(tender.materials) && tender.materials.length
         ? `
-          <ul style="margin-top:10px; padding-left:20px;">
-            ${tender.materials
-              .map(
-                (mat) => `
-                <li>
-                  ${mat.material || mat.item || "-"} (${mat.subMaterial || mat.subItem || "N/A"})
-                  - ${mat.weight || "-"} MT, ${mat.quantity || "-"} Qty
-                </li>
-              `,
-              )
-              .join("")}
-          </ul>
-        `
+      <div style="margin-top:12px;">
+        <div style="font-weight:bold; margin-bottom:8px;">Materials</div>
+        <ul style="margin-top:10px; padding-left:20px;">
+          ${tender.materials
+            .map(
+              (mat) => `
+              <li>
+                <strong>${mat.materialName || "-"}</strong>
+                ${mat.hsnCode ? ` [HSN: ${mat.hsnCode}]` : ""}
+                ${mat.quantity != null ? ` - Qty: ${mat.quantity}` : ""}
+                ${mat.unit ? ` ${mat.unit}` : ""}
+                ${mat.remarks ? ` (${mat.remarks})` : ""}
+              </li>
+            `,
+            )
+            .join("")}
+        </ul>
+      </div>
+    `
         : "";
 
     // Use vehicles if present, else fallback to materials (keeps old flow safe)
-    const itemsHtml = vehiclesHtml || materialsHtml || "<p>-</p>";
+    const itemsHtml =
+      [vehiclesHtml, materialsHtml].filter(Boolean).join("") || "<p>-</p>";
 
     /* ------------------------------ final save (same) ------------------------------ */
 
@@ -1391,6 +1428,8 @@ export const getQuotationHistoryForTransporter = async (req, res) => {
           pickup: tender.pickup || null,
           drop: tender.drop || null,
 
+          materials: Array.isArray(tender.materials) ? tender.materials : [],
+
           // ✅ NEW: vehicleRequirements instead of materials
           vehicleRequirements: Array.isArray(tender.vehicleRequirements)
             ? tender.vehicleRequirements
@@ -1962,7 +2001,20 @@ export const requestSelectionConfirmation = async (req, res) => {
               <p>Your quotation has been selected for the tender below. Please open your Transporter Dashboard and <b>Accept/Reject</b>.</p>
               <table cellpadding="6" style="border:1px solid #e5e7eb;border-radius:8px">
                 <tr><td><b>Project</b></td><td>${tender.projectName || "-"}</td></tr>
-                <tr><td><b>Dispatch</b></td><td>${tender.dispatchLocation || "-"}</td></tr>
+                <tr>
+                  <td><b>Pickup</b></td>
+                  <td>${
+                    [
+                      tender.pickup?.address,
+                      tender.pickup?.city,
+                      tender.pickup?.district,
+                      tender.pickup?.state,
+                      tender.pickup?.pincode,
+                    ]
+                      .filter(Boolean)
+                      .join(", ") || "-"
+                  }</td>
+                </tr>
                 <tr><td><b>Delivery</b></td><td>${
                   tender.deliveryWindow?.from && tender.deliveryWindow?.to
                     ? `${moment(tender.deliveryWindow.from).tz("Asia/Kolkata").format("DD MMM YYYY")} → ${moment(tender.deliveryWindow.to).tz("Asia/Kolkata").format("DD MMM YYYY")}`
@@ -2129,6 +2181,7 @@ export const getPendingConfirmationsForTransporter = async (req, res) => {
           "drop",
           "closeDate", //  close date
           "deliveryWindow",
+          "materials",
           "vehicleRequirements",
           "status",
           "selection", // contains quotation + requestedAt + etc
@@ -2162,6 +2215,8 @@ export const getPendingConfirmationsForTransporter = async (req, res) => {
 
       closeDate: t.closeDate,
       deliveryWindow: t.deliveryWindow,
+
+      materials: Array.isArray(t.materials) ? t.materials : [],
 
       // ✅ NEW: vehicleRequirements instead of materials
       vehicleRequirements: Array.isArray(t.vehicleRequirements)

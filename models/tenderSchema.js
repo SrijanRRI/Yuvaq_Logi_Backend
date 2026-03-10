@@ -43,6 +43,19 @@ const vehicleRequirementSchema = new Schema(
   { _id: false },
 );
 
+const tenderMaterialSchema = new Schema(
+  {
+    hsnCode: { type: String, required: true, trim: true }, // display format
+    hsnDigits: { type: String, required: true, trim: true }, // normalized format
+    materialName: { type: String, required: true, trim: true },
+
+    quantity: { type: Number, default: null, min: 0 },
+    unit: { type: String, default: "", trim: true },
+    remarks: { type: String, default: "", trim: true },
+  },
+  { _id: false },
+);
+
 const tenderSchema = new mongoose.Schema(
   {
     createdBy: {
@@ -96,6 +109,11 @@ const tenderSchema = new mongoose.Schema(
     pickup: { type: locationSchema, default: null },
 
     drop: { type: locationSchema, default: null },
+
+    materials: {
+      type: [tenderMaterialSchema],
+      default: [],
+    },
 
     vehicleRequirements: {
       type: [vehicleRequirementSchema],

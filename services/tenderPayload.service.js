@@ -7,12 +7,97 @@ function httpError(status, message) {
   return err;
 }
 
+const normalizeHsn = (value = "") => String(value).replace(/\D/g, "").trim();
+
+const normalizeText = (value = "") => String(value || "").trim();
+
+const normalizeLocation = (loc, label) => {
+  const pincode = String(loc?.pincode || "").replace(/\D/g, "").slice(0, 6);
+  const address = normalizeText(loc?.address);
+  const location = normalizeText(loc?.location);
+  const city = normalizeText(loc?.city);
+  const district = normalizeText(loc?.district);
+  const state = normalizeText(loc?.state);
+  const country = normalizeText(loc?.country || "India");
+
+  if (!pincode || pincode.length !== 6) {
+    throw httpError(400, `${label} pincode must be 6 digits`);
+  }
+
+  if (!address) {
+    throw httpError(400, `${label} address is required`);
+  }
+
+  return {
+    pincode,
+    address,
+    location,
+    city,
+    district,
+    state,
+    country,
+  };
+};
+
+const normalizeMaterials = (materials) => {
+  if (!Array.isArray(materials) || materials.length === 0) return [];
+
+  return materials.map((m, index) => {
+    const hsnDigits = normalizeHsn(m?.hsnDigits || m?.hsnCode);
+    const hsnCode = normalizeText(m?.hsnCode) || hsnDigits;
+    const materialName = normalizeText(m?.materialName);
+
+    if (!hsnDigits) {
+      throw httpError(400, `Material #${index + 1}: HSN code is required`);
+    }
+
+    if (!materialName) {
+      throw httpError(400, `Material #${index + 1}: material name is required`);
+    }
+
+    let quantity = null;
+    if (m?.quantity !== undefined && m?.quantity !== null && m?.quantity !== "") {
+      const q = Number(m.quantity);
+      if (!Number.isFinite(q) || q < 0) {
+        throw httpError(400, `Material #${index + 1}: quantity must be a valid number >= 0`);
+      }
+      quantity = q;
+    }
+
+    return {
+      hsnCode,
+      hsnDigits,
+      materialName,
+      quantity,
+      unit: normalizeText(m?.unit),
+      remarks: normalizeText(m?.remarks),
+    };
+  });
+};
+
+const normalizeTransporters = (transporters) => {
+  if (!Array.isArray(transporters) || transporters.length === 0) {
+    throw httpError(400, "At least one transporter is required");
+  }
+
+  const unique = [...new Set(transporters.map(String))];
+
+  for (const id of unique) {
+    if (!mongoose.isValidObjectId(id)) {
+      throw httpError(400, "Invalid transporter id");
+    }
+  }
+
+  return unique;
+};
+
 export function buildTenderPayloadFromBody(body, createdByUserId) {
   const {
     shipmentPlanId,
     pickup,
     drop,
     vehicleRequirements,
+    materials,
     transporters,
     remarks,
     closeDate,
@@ -32,7 +117,6 @@ export function buildTenderPayloadFromBody(body, createdByUserId) {
     minBidAmount,
   } = body || {};
 
-  // -------------------- Basic validations --------------------
   if (!projectName || !projectCode || !purchaseOrder) {
     throw httpError(400, "Project name, code and PO are required");
   }
@@ -49,33 +133,26 @@ export function buildTenderPayloadFromBody(body, createdByUserId) {
     throw httpError(400, "Delivery window (from and to dates) is required");
   }
 
-  if (!pickup?.pincode || !pickup?.address) {
-    throw httpError(400, "Pickup pincode and address are required");
-  }
-
-  if (!drop?.pincode || !drop?.address) {
-    throw httpError(400, "Drop pincode and address are required");
-  }
-
   if (!Array.isArray(vehicleRequirements) || vehicleRequirements.length === 0) {
     throw httpError(400, "At least one vehicle requirement is required");
   }
 
-  if (!Array.isArray(transporters) || transporters.length === 0) {
-    throw httpError(400, "At least one transporter is required");
-  }
+  const normalizedPickup = normalizeLocation(pickup, "Pickup");
+  const normalizedDrop = normalizeLocation(drop, "Drop");
+  const normalizedMaterials = normalizeMaterials(materials);
+  const normalizedTransporters = normalizeTransporters(transporters);
 
-  // totals (your schema requires these)
   const tw = Number(totalWeight);
   const tq = Number(totalQuantity);
+
   if (!Number.isFinite(tw) || tw <= 0) {
     throw httpError(400, "totalWeight must be a valid number > 0");
   }
+
   if (!Number.isFinite(tq) || tq <= 0) {
     throw httpError(400, "totalQuantity must be a valid number > 0");
   }
 
-  // optional shipmentPlanId
   let shipmentPlanRef = null;
   if (shipmentPlanId) {
     if (!mongoose.isValidObjectId(shipmentPlanId)) {
@@ -84,7 +161,6 @@ export function buildTenderPayloadFromBody(body, createdByUserId) {
     shipmentPlanRef = shipmentPlanId;
   }
 
-  // priceDifference optional
   let priceDifferenceValue;
   if (priceDifference !== undefined && priceDifference !== null && priceDifference !== "") {
     const n = Number(priceDifference);
@@ -94,7 +170,6 @@ export function buildTenderPayloadFromBody(body, createdByUserId) {
     priceDifferenceValue = n;
   }
 
-  // -------------------- Time conversions (IST → UTC) --------------------
   const timezone = "Asia/Kolkata";
 
   const utcBiddingStart = moment.tz(biddingStart, timezone).utc().toDate();
@@ -112,7 +187,6 @@ export function buildTenderPayloadFromBody(body, createdByUserId) {
   const utcDeliveryFrom = moment.tz(deliveryWindow.from, timezone).utc().toDate();
   const utcDeliveryTo = moment.tz(deliveryWindow.to, timezone).utc().toDate();
 
-  // Close date parse: YYYY-MM-DD → UTC midnight
   let utcCloseDate = null;
   try {
     const [year, month, day] = String(closeDate).split("-").map(Number);
@@ -122,11 +196,10 @@ export function buildTenderPayloadFromBody(body, createdByUserId) {
     throw httpError(400, "closeDate must be a valid YYYY-MM-DD date");
   }
 
-  // -------------------- Normalize vehicle requirements --------------------
   const normalizedVehicles = vehicleRequirements.map((v) => ({
     vehicleId: v.vehicleId,
-    category: String(v.category || "").trim(),
-    subCategory: String(v.subCategory || "").trim(),
+    category: normalizeText(v.category),
+    subCategory: normalizeText(v.subCategory),
     quantity: Number(v.quantity || 1),
   }));
 
@@ -134,21 +207,23 @@ export function buildTenderPayloadFromBody(body, createdByUserId) {
     if (!v.vehicleId || !mongoose.isValidObjectId(v.vehicleId)) {
       throw httpError(400, "Valid vehicleId is required for each vehicle requirement");
     }
+
     if (!v.category || !v.subCategory) {
       throw httpError(400, "Each vehicle requirement must include category and subCategory");
     }
+
     if (!Number.isFinite(v.quantity) || v.quantity < 1) {
       throw httpError(400, "Vehicle quantity must be a number >= 1");
     }
   }
 
-  // -------------------- Bid limits --------------------
   const minAmt = Number(minBidAmount);
   const maxAmt = Number(maxBidAmount);
 
   if (!Number.isFinite(maxAmt) || maxAmt <= 0) {
     throw httpError(400, "maxBidAmount must be a valid number > 0");
   }
+
   if (!Number.isFinite(minAmt) || minAmt < 0) {
     throw httpError(400, "minBidAmount must be a valid number >= 0");
   }
@@ -157,36 +232,42 @@ export function buildTenderPayloadFromBody(body, createdByUserId) {
   if (!maxBidUnit || !allowedUnits.includes(String(maxBidUnit))) {
     throw httpError(400, "maxBidUnit is required and must be Per MT or Per Tender");
   }
+
   if (minAmt > maxAmt) {
     throw httpError(400, "minBidAmount cannot be greater than maxBidAmount");
   }
 
-  // -------------------- Final payload --------------------
   const tenderPayload = {
     createdBy: createdByUserId,
     shipmentPlan: shipmentPlanRef || null,
-    pickup,
-    drop,
+
+    pickup: normalizedPickup,
+    drop: normalizedDrop,
+
+    materials: normalizedMaterials,
     vehicleRequirements: normalizedVehicles,
-    transporters,
-    remarks: remarks || "",
+    transporters: normalizedTransporters,
+
+    remarks: normalizeText(remarks),
     closeDate: utcCloseDate,
 
     biddingStart: utcBiddingStart,
     biddingEnd: utcBiddingSoftEnd,
-
     biddingSoftEnd: utcBiddingSoftEnd,
     biddingHardEnd: utcBiddingHardEnd,
 
-    deliveryWindow: { from: utcDeliveryFrom, to: utcDeliveryTo },
+    deliveryWindow: {
+      from: utcDeliveryFrom,
+      to: utcDeliveryTo,
+    },
 
     totalWeight: tw,
     totalQuantity: tq,
 
-    projectName,
-    projectCode,
-    purchaseOrder,
-    projectRemark: projectRemark || "",
+    projectName: normalizeText(projectName),
+    projectCode: normalizeText(projectCode),
+    purchaseOrder: normalizeText(purchaseOrder),
+    projectRemark: normalizeText(projectRemark),
 
     minBidAmount: minAmt,
     maxBidAmount: maxAmt,
