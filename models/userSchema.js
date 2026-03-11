@@ -46,6 +46,16 @@ const userSchema = new mongoose.Schema(
       sparse: true, // allows null/undefined users without gstn
       match: [/^[0-9A-Z]{15}$/, "Invalid GST Number"], // regex for GSTIN
     },
+    
+    transportId: {
+      type: String,
+      trim: true,
+      uppercase: true,
+      unique: true,
+      sparse: true,
+      minlength: [3, "Transport ID is too short"],
+      maxlength: [30, "Transport ID is too long"],
+    },
     // Final approval flag used across your app
     isApproved: {
       type: Boolean,

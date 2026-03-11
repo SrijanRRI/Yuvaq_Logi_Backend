@@ -43,6 +43,19 @@ const vehicleRequirementSchema = new Schema(
   { _id: false },
 );
 
+const tenderMaterialSchema = new Schema(
+  {
+    hsnCode: { type: String, required: true, trim: true }, // display format
+    hsnDigits: { type: String, required: true, trim: true }, // normalized format
+    materialName: { type: String, required: true, trim: true },
+
+    quantity: { type: Number, default: null, min: 0 },
+    unit: { type: String, default: "", trim: true },
+    remarks: { type: String, default: "", trim: true },
+  },
+  { _id: false },
+);
+
 const tenderSchema = new mongoose.Schema(
   {
     createdBy: {
@@ -97,6 +110,11 @@ const tenderSchema = new mongoose.Schema(
 
     drop: { type: locationSchema, default: null },
 
+    materials: {
+      type: [tenderMaterialSchema],
+      default: [],
+    },
+
     vehicleRequirements: {
       type: [vehicleRequirementSchema],
       validate: {
@@ -113,9 +131,17 @@ const tenderSchema = new mongoose.Schema(
 
     status: {
       type: String,
-      enum: ["open", "quoted", "finalized", "closed"],
-      default: "open",
+      enum: ["draft", "open", "quoted", "finalized", "closed", "cancelled"],
+      default: "draft",
     },
+
+    draftSubmitAt: { type: Date, default: null }, // when it should publish
+    draftCancelledAt: { type: Date, default: null },
+    draftFinalizedAt: { type: Date, default: null },
+
+    draftProcessingAt: { type: Date, default: null }, // lock to avoid double finalize
+    publishedAt: { type: Date, default: null }, // when it became "open"
+    lastEditedAt: { type: Date, default: null },
 
     transporters: [
       {
@@ -189,6 +215,10 @@ const tenderSchema = new mongoose.Schema(
     projectCode: { type: String, required: true },
     purchaseOrder: { type: String, required: true, trim: true },
     projectRemark: { type: String, default: "", trim: true },
+
+    cancelledAt: { type: Date, default: null },
+    cancelledBy: { type: Schema.Types.ObjectId, ref: "user", default: null },
+    cancelledReason: { type: String, default: "", trim: true },
 
     selection: {
       status: {
@@ -290,5 +320,7 @@ tenderSchema.index({ "vehicleRequirements.subCategory": 1 });
 
 tenderSchema.index({ biddingHardEnd: 1 });
 tenderSchema.index({ biddingSoftEnd: 1 });
+
+tenderSchema.index({ status: 1, draftSubmitAt: 1 });
 
 export default mongoose.model("Tender", tenderSchema);

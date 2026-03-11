@@ -14,7 +14,7 @@ cron.schedule("0 0 * * *", async () => {
     const result = await Tender.updateMany(
       {
         closeDate: { $lt: localMidnight },
-        status: { $ne: "closed" }
+        status: { $ne: ["open", "quoted"] }
       },
       { $set: { status: "closed" } }
     );
