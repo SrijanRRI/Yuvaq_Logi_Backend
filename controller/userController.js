@@ -396,3 +396,71 @@ export const getCurrentUser = async (req, res) => {
     res.status(500).json({ success: false, message: err.message });
   }
 };
+
+export const getMyProfile = async (req, res) => {
+  try {
+    const user = await userModel.findById(req.user.id).select("-password");
+
+    if (!user) {
+      return res.status(404).json({
+        success: false,
+        message: "User not found",
+      });
+    }
+
+    const sub = user.subscription || {};
+    const approvals = sub.approvals || {};
+    const approvedBy = Array.isArray(approvals.approvedBy)
+      ? approvals.approvedBy
+      : [];
+    const requiredApprovals = Number(approvals.requiredApprovals || 0);
+    const approvedCount = approvedBy.length;
+    const pendingApprovals = Math.max(requiredApprovals - approvedCount, 0);
+
+    const subscriptionActive =
+      sub.status === "active" &&
+      sub.endsAt &&
+      new Date(sub.endsAt) > new Date();
+
+    return res.status(200).json({
+      success: true,
+      data: {
+        _id: user._id,
+        name: user.name || "",
+        email: user.email || "",
+        phone: user.phone || "",
+        role: user.role || "",
+        isApproved: !!user.isApproved,
+        notificationId: user.notificationId || "",
+        gstn: user.gstn || "",
+        transportId: user.transportId || "",
+        createdAt: user.createdAt || null,
+        updatedAt: user.updatedAt || null,
+
+        subscription: {
+          status: sub.status || "none",
+          plan: sub.plan || "",
+          startAt: sub.startAt || null,
+          endsAt: sub.endsAt || null,
+          lastPaymentId: sub.lastPaymentId || "",
+          updatedAt: sub.updatedAt || null,
+          isApproved: !!sub.isApproved,
+          isActive: subscriptionActive,
+
+          approvals: {
+            requiredApprovals,
+            approvedCount,
+            pendingApprovals,
+            approvedBy,
+            finalizedAt: approvals.finalizedAt || null,
+          },
+        },
+      },
+    });
+  } catch (err) {
+    return res.status(500).json({
+      success: false,
+      message: err.message || "Failed to fetch profile",
+    });
+  }
+};
