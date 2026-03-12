@@ -519,8 +519,8 @@ const sendVehicleDecisionEmail = async ({
     });
 
     const subject = approved
-      ? "Vehicle Request Approved - RRISPAT"
-      : "Vehicle Request Rejected - RRISPAT";
+      ? "Vehicle Request Approved - LogiQ"
+      : "Vehicle Request Rejected - LogiQ";
 
     const html = approved
       ? `<!DOCTYPE html>
@@ -533,7 +533,7 @@ const sendVehicleDecisionEmail = async ({
           ${adminRemark ? `<p><strong>Admin Remark:</strong> ${adminRemark}</p>` : ""}
           <br />
           <p>Best regards,</p>
-          <p><strong>RR ISPAT Support Team</strong></p>
+          <p><strong>LogiQ Support Team</strong></p>
         </body>
       </html>`
             : `<!DOCTYPE html>
@@ -545,7 +545,7 @@ const sendVehicleDecisionEmail = async ({
           ${adminRemark ? `<p><strong>Admin Remark:</strong> ${adminRemark}</p>` : ""}
           <br />
           <p>Best regards,</p>
-          <p><strong>RR ISPAT Support Team</strong></p>
+          <p><strong>LogiQ Support Team</strong></p>
         </body>
       </html>`;
 
