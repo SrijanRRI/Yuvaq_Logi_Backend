@@ -1,5 +1,5 @@
 import express from 'express'
-import { login,signup,forgotPassword,resetPassword,getUser,logout,getAllUsers,getCurrentUser} from '../controller/userController.js';
+import { login,signup,forgotPassword,resetPassword,getUser,logout,getAllUsers,getCurrentUser, getMyProfile} from '../controller/userController.js';
 import { jwtAuth } from '../middleware/jwtAuth.js';
 
 
@@ -14,5 +14,6 @@ authRouter.get("/user", jwtAuth, getUser);
 authRouter.post("/logout", jwtAuth, logout);
 authRouter.get("/user/all", getAllUsers);
 authRouter.get("/me", jwtAuth, getCurrentUser);
+authRouter.get("/profile", jwtAuth, getMyProfile);
 
 export default authRouter;
