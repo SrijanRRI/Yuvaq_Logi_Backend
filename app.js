@@ -11,6 +11,7 @@ import vehicleCatalogRouter from "./routes/vehicleCatalogRouter.js"
 import "./cron/autoCloseTenders.js";
 import tenderRouter from './routes/tenderRouter.js';
 import hsnRouter from "./routes/hsnRouter.js";
+import feedbackRouter from "./routes/feedbackRouter.js";
 // import connectToDb from './config/dbConn.js';
 import cookieParser from 'cookie-parser'
 import cors from 'cors';
@@ -44,8 +45,8 @@ app.use('/quotation', quotationRouter);
 app.use('/shipment-planning',shipmentRouter)
 app.use("/webhooks", webhookRouter);
 app.use("/hsn", hsnRouter);
-
 app.use("/vehicle", vehicleCatalogRouter);
+app.use("/feedback", feedbackRouter);
 
 // ✅ HEALTH CHECK (helps debug instantly)
 app.get("/health", (req, res) => {
