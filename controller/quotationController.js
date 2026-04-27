@@ -181,6 +181,7 @@ export const submitQuotation = async (req, res) => {
       // ✅ will be undefined if not provided (allowed now)
       vehicleNumber,
       files: uploadedFiles,
+      phase: "normal",
     });
     await quotation.save();
 
