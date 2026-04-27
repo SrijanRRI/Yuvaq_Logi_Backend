@@ -50,10 +50,10 @@ CMD ["node", "index.js"]
 
 
 
-# docker build  --no-cache -t 192.168.13.72:5000/logiq_be_13_march .      
-# docker run -d --name logiq_be_13_march -p 86:86 logiq_be_image
+# docker build  --no-cache -t 192.168.13.72:5000/logiq_be_21_april .      
+# docker run -d --name logiq_be_21_april -p 86:86 logiq_be_image
 
-# docker tag logiq_be_image 192.168.13.72:5000/logiq_be_13_march
-# docker push 192.168.13.72:5000/logiq_be_13_march
-# docker pull 192.168.13.72:5000/logiq_be_13_march
-# docker run -d --name logiq_be_13_march -p 86:86 192.168.13.72:5000/logiq_be_13_march
+# docker tag logiq_be_image 192.168.13.72:5000/logiq_be_21_april
+# docker push 192.168.13.72:5000/logiq_be_21_april
+# docker pull 192.168.13.72:5000/logiq_be_21_april
+# docker run -d --name logiq_be_21_april -p 86:86 192.168.13.72:5000/logiq_be_21_april
