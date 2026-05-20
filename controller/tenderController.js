@@ -1372,7 +1372,7 @@ export const getQuotationHistoryForTransporter = async (req, res) => {
           select: "name email",
         },
       })
-      .sort({ createdAt: 1 });
+      .sort({ createdAt: -1 });
 
     const tenderQuotesMap = new Map();
 
@@ -1403,26 +1403,36 @@ export const getQuotationHistoryForTransporter = async (req, res) => {
           (q) => q._id.toString() === tender.selectedQuotation.toString(),
         );
 
-      const formattedQuotes = tenderQuotes.map((q) => {
-        const signedFiles = (q.files || []).map((file) => {
-          const key = file.url?.split("/").pop();
+      const formattedQuotes = tenderQuotes
+        .sort((a, b) => new Date(b.createdAt) - new Date(a.createdAt))
+        .map((q) => {
+          const signedFiles = (q.files || []).map((file) => {
+            const key = file.url?.split("/").pop();
+            return {
+              ...file,
+              url: generateSignedUrl(key),
+            };
+          });
+
           return {
-            ...file,
-            url: generateSignedUrl(key),
+            _id: q._id,
+            price: q.price,
+            vehicleNumber: q.vehicleNumber,
+            createdAt: q.createdAt,
+            files: signedFiles,
           };
         });
 
-        return {
-          _id: q._id,
-          price: q.price,
-          vehicleNumber: q.vehicleNumber,
-          createdAt: q.createdAt,
-          files: signedFiles,
-        };
-      });
+      const latestQuotationAt = tenderQuotes.reduce((latest, q) => {
+        const time = q.createdAt ? new Date(q.createdAt).getTime() : 0;
+        return Math.max(latest, time);
+      }, 0);
 
       result.push({
         tenderId: tender._id,
+        latestQuotationAt: latestQuotationAt
+          ? new Date(latestQuotationAt)
+          : null,
         tender: {
           // ✅ NEW: pickup/drop instead of dispatchLocation/address
           pickup: tender.pickup || null,
@@ -1454,6 +1464,18 @@ export const getQuotationHistoryForTransporter = async (req, res) => {
       });
     }
 
+    result.sort((a, b) => {
+      const aTime = a.latestQuotationAt
+        ? new Date(a.latestQuotationAt).getTime()
+        : 0;
+
+      const bTime = b.latestQuotationAt
+        ? new Date(b.latestQuotationAt).getTime()
+        : 0;
+
+      return bTime - aTime;
+    });
+
     res.status(200).json({
       success: true,
       data: result,
@@ -1463,99 +1485,6 @@ export const getQuotationHistoryForTransporter = async (req, res) => {
     res.status(500).json({ success: false, message: error.message });
   }
 };
-
-// ✅ all finalized tenders
-
-// export const getAllFinalizedTendersWithQuotations = async (req, res) => {
-//   try {
-//     const rrUserId = req.user.id;
-
-//     // ✅ Get all finalized tenders created by this RR user
-//     const finalizedTenders = await Tender.find({
-//       createdBy: rrUserId,
-//       status: "finalized",
-//     })
-//       .populate({
-//         path: "selectedQuotation",
-//         populate: { path: "transportUser", select: "name email" },
-//       })
-//       .populate("createdBy", "name email")
-//       .sort({ updatedAt: -1 });
-
-//     const results = [];
-
-//     for (const tender of finalizedTenders) {
-//       // ✅ Get all quotations for this tender
-//       const quotations = await Quotation.find({ tender: tender._id })
-//         .populate("transportUser", "name email")
-//         .sort({ createdAt: -1 });
-
-//       const allQuotations = quotations.map((q) => {
-//         const signedFiles = (q.files || []).map((file) => {
-//           const key = file.url?.split("/").pop();
-//           return {
-//             ...file,
-//             url: generateSignedUrl(key),
-//           };
-//         });
-
-//         return {
-//           _id: q._id,
-//           price: q.price,
-//           vehicleNumber: q.vehicleNumber,
-//           createdAt: q.createdAt,
-//           transportUser: q.transportUser,
-//           files: signedFiles,
-//         };
-//       });
-
-//       const selectedQuotationId = tender.selectedQuotation?._id?.toString();
-
-//       results.push({
-//         tender: {
-//           _id: tender._id,
-//           dispatchLocation: tender.dispatchLocation,
-//           address: tender.address,
-//           deliveryWindow: tender.deliveryWindow, // ✅ Updated from dateOfDelivery
-//           closeDate: tender.closeDate,
-//           remarks: tender.remarks,
-//           status: tender.status,
-//           finalPrice: tender.finalPrice,
-//           materials: tender.materials,
-//           totalWeight: tender.totalWeight,
-//           totalQuantity: tender.totalQuantity,
-//           createdBy: tender.createdBy,
-//         },
-//         selectedQuotation: tender.selectedQuotation
-//           ? {
-//               _id: tender.selectedQuotation._id,
-//               price: tender.selectedQuotation.price,
-//               vehicleNumber: tender.selectedQuotation.vehicleNumber,
-//               transportUser: tender.selectedQuotation.transportUser,
-//               files: (tender.selectedQuotation.files || []).map((file) => {
-//                 const key = file.url?.split("/").pop();
-//                 return {
-//                   ...file,
-//                   url: generateSignedUrl(key),
-//                 };
-//               }),
-//             }
-//           : null,
-//         allQuotations: allQuotations.map((q) => ({
-//           ...q,
-//           selected: q._id.toString() === selectedQuotationId,
-//         })),
-//       });
-//     }
-
-//     res.status(200).json({ success: true, data: results });
-//   } catch (error) {
-//     console.error("Error fetching finalized tenders for RR user:", error);
-//     res.status(500).json({ success: false, message: error.message });
-//   }
-// };
-
-//your position for transporters
 
 export const getMyQuotationPosition = async (req, res) => {
   try {
