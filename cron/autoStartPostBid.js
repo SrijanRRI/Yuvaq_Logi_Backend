@@ -186,9 +186,21 @@ async function autoStartPostBidForTender(tender) {
     return;
   }
 
+  // const eligibleTransporters = [
+  //   ...new Set(
+  //     bestNormalQuotes
+  //       .map((q) => q.transportUser)
+  //       .filter(Boolean)
+  //       .map(String),
+  //   ),
+  // ];
+
+  // ✅ Eligible = TOP 5 participating transporters only
+  const top5NormalQuotes = bestNormalQuotes.slice(0, 5);
+
   const eligibleTransporters = [
     ...new Set(
-      bestNormalQuotes
+      top5NormalQuotes
         .map((q) => q.transportUser)
         .filter(Boolean)
         .map(String),
@@ -254,8 +266,12 @@ async function autoStartPostBidForTender(tender) {
     endsAt,
   });
 
+  // console.log(
+  //   `[autoStartPostBid] started ${tenderId}. L1=${l1Price}, range=${range.rangeMin}-${range.rangeMax}, eligible=${eligibleTransporters.length}`,
+  // );
+
   console.log(
-    `[autoStartPostBid] started ${tenderId}. L1=${l1Price}, range=${range.rangeMin}-${range.rangeMax}, eligible=${eligibleTransporters.length}`,
+    `[autoStartPostBid] started ${tenderId}. L1=${l1Price}, range=${range.rangeMin}-${range.rangeMax}, top5Eligible=${eligibleTransporters.length}`,
   );
 }
 

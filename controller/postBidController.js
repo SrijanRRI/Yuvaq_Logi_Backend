@@ -92,26 +92,37 @@ export const startPostBidNegotiation = async (req, res) => {
     const bidEnd = new Date(tender.biddingEnd);
     const endsAt = new Date(bidEnd.getTime() + POST_BID_MINUTES * 60 * 1000);
 
-    // freeze eligible top3 based on NORMAL quotes only
-    // const bestNormal = await getBestQuotesPerTransporter({ tenderId: tender._id, phase: "normal" });
-    // const top3 = bestNormal.slice(0, 3);
+    // // ✅ Eligible = ALL participating transporters (unique) based on NORMAL quotes
+    // const bestNormal = await getBestQuotesPerTransporter({
+    //   tenderId: tender._id,
+    //   phase: "normal",
+    // });
 
-    // const eligibleIds = top3.map((q) => q.transportUser).filter(Boolean);
+    // const eligibleIds = bestNormal.map((q) => q.transportUser).filter(Boolean);
 
-    // ✅ Eligible = ALL participating transporters (unique) based on NORMAL quotes
+    // ✅ Eligible = TOP 5 participating transporters based on best NORMAL quotes
     const bestNormal = await getBestQuotesPerTransporter({
       tenderId: tender._id,
       phase: "normal",
     });
 
-    const eligibleIds = bestNormal.map((q) => q.transportUser).filter(Boolean);
+    const top5Normal = bestNormal.slice(0, 5);
 
-    if (!eligibleIds.length) {
-      return res.status(409).json({
-        success: false,
-        message: "No participating transporters found for post-bid.",
-      });
-    }
+    const eligibleIds = top5Normal.map((q) => q.transportUser).filter(Boolean);
+
+    // if (!eligibleIds.length) {
+    //   return res.status(409).json({
+    //     success: false,
+    //     message: "No participating transporters found for post-bid.",
+    //   });
+    // }
+
+    return res.status(200).json({
+      success: true,
+      message: "Post-bid started and notifications sent to top 5 transporters.",
+      postBid: tender.postBid,
+      eligibleCount: eligibleIds.length,
+    });
 
     tender.postBid = {
       enabled: true,
