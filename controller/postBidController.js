@@ -110,19 +110,12 @@ export const startPostBidNegotiation = async (req, res) => {
 
     const eligibleIds = top5Normal.map((q) => q.transportUser).filter(Boolean);
 
-    // if (!eligibleIds.length) {
-    //   return res.status(409).json({
-    //     success: false,
-    //     message: "No participating transporters found for post-bid.",
-    //   });
-    // }
-
-    return res.status(200).json({
-      success: true,
-      message: "Post-bid started and notifications sent to top 5 transporters.",
-      postBid: tender.postBid,
-      eligibleCount: eligibleIds.length,
-    });
+    if (!eligibleIds.length) {
+      return res.status(409).json({
+        success: false,
+        message: "No participating transporters found for post-bid.",
+      });
+    }
 
     tender.postBid = {
       enabled: true,
@@ -170,7 +163,7 @@ export const startPostBidNegotiation = async (req, res) => {
 
     return res.status(200).json({
       success: true,
-      message: "Post-bid started and notifications sent.",
+      message: "Post-bid started and notifications sent to top 5 transporters.",
       postBid: tender.postBid,
       eligibleCount: eligibleIds.length,
     });

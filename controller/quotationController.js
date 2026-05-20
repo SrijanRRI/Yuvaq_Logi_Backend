@@ -53,9 +53,9 @@ export const submitQuotation = async (req, res) => {
     // 🔹 Use tender.priceDifference (fallback to 30 if missing/invalid)
     const minDelta =
       Number.isFinite(Number(tender.priceDifference)) &&
-      Number(tender.priceDifference) >= 0
+      Number(tender.priceDifference) > 0
         ? Number(tender.priceDifference)
-        : 30;
+        : 25;
 
     // 2) Enforce max 5 normal quotation submissions per user for this tender
     const bidCount = await Quotation.countDocuments({
@@ -136,16 +136,63 @@ export const submitQuotation = async (req, res) => {
     }
 
     // 4) Rule: if new price is below L1, it must beat L1 by at least tender.priceDifference
-    if (L1 && numericPrice < L1.price) {
-      const diff = L1.price - numericPrice;
-      if (diff < minDelta) {
+    // if (L1 && numericPrice < L1.price) {
+    //   const diff = L1.price - numericPrice;
+    //   if (diff < minDelta) {
+    //     return res.status(400).json({
+    //       success: false,
+    //       message: `Given quoted price difference must be ${minDelta}`,
+    //       data: {
+    //         currentL1: {
+    //           quotationId: L1._id,
+    //           transportUser: L1.transportUser,
+    //           createdAt: L1.createdAt,
+    //           vehicleNumber: L1.vehicleNumber,
+    //         },
+    //         yourPrice: numericPrice,
+    //         difference: diff,
+    //         minimumRequiredDifference: minDelta,
+    //       },
+    //     });
+    //   }
+    // }
+
+    if (L1) {
+      const currentL1Price = Number(L1.price);
+      const diff = currentL1Price - numericPrice;
+
+      if (numericPrice >= currentL1Price) {
         return res.status(400).json({
           success: false,
-          message: `Given quoted price difference must be ${minDelta}`,
+          message: `Your quote must be lower than current lowest quote ₹${currentL1Price.toLocaleString(
+            "en-IN",
+          )}. Minimum difference required is ₹${minDelta}.`,
           data: {
             currentL1: {
               quotationId: L1._id,
               transportUser: L1.transportUser,
+              price: currentL1Price,
+              createdAt: L1.createdAt,
+              vehicleNumber: L1.vehicleNumber,
+            },
+            yourPrice: numericPrice,
+            difference: diff,
+            minimumRequiredDifference: minDelta,
+          },
+        });
+      }
+
+      if (diff < minDelta) {
+        return res.status(400).json({
+          success: false,
+          message: `Your quote must be at least ₹${minDelta} lower than current lowest quote ₹${currentL1Price.toLocaleString(
+            "en-IN",
+          )}.`,
+          data: {
+            currentL1: {
+              quotationId: L1._id,
+              transportUser: L1.transportUser,
+              price: currentL1Price,
               createdAt: L1.createdAt,
               vehicleNumber: L1.vehicleNumber,
             },
