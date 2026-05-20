@@ -3,6 +3,8 @@ import Tender from "../models/tenderSchema.js";
 import { s3, BUCKET_NAME } from "../utils/minioClient.js";
 import { generateSignedUrl } from "../utils/minioClient.js";
 
+const MAX_NORMAL_BIDS_PER_TENDER = 5;
+
 export const submitQuotation = async (req, res) => {
   try {
     const { price } = req.body;
@@ -55,24 +57,29 @@ export const submitQuotation = async (req, res) => {
         ? Number(tender.priceDifference)
         : 30;
 
-    // =========================================================
-    // ✅ UNLIMITED BIDDING ENABLED (3-bid restriction removed)
-    // Previously:
-    // 2) Enforce 3-bid limit per user for this tender
-    //
-    // const bidCount = await Quotation.countDocuments({
-    //   tender: tenderId,
-    //   transportUser: userId,
-    //   phase: "normal",
-    // });
-    //
-    // if (bidCount >= 3) {
-    //   return res.status(403).json({
-    //     success: false,
-    //     message: "You have reached the maximum of 3 bids for this tender",
-    //   });
-    // }
-    // =========================================================
+    // 2) Enforce max 5 normal quotation submissions per user for this tender
+    const bidCount = await Quotation.countDocuments({
+      tender: tenderId,
+      transportUser: userId,
+      $or: [
+        { phase: "normal" },
+        { phase: { $exists: false } }, // old records compatibility
+        { phase: null },
+      ],
+    });
+
+    if (bidCount >= MAX_NORMAL_BIDS_PER_TENDER) {
+      return res.status(403).json({
+        success: false,
+        message:
+          "You have reached the maximum limit of 5 quotations for this tender.",
+        data: {
+          submittedCount: bidCount,
+          maxSubmissions: MAX_NORMAL_BIDS_PER_TENDER,
+          remainingSubmissions: 0,
+        },
+      });
+    }
 
     // 2.5) Enforce: transporter must always quote LOWER than their previous quote (strictly)
     const prevQuote = await Quotation.findOne({
@@ -243,6 +250,12 @@ export const submitQuotation = async (req, res) => {
       message: "Quotation submitted successfully.",
       data: {
         quotation,
+        submittedCount: bidCount + 1,
+        maxSubmissions: MAX_NORMAL_BIDS_PER_TENDER,
+        remainingSubmissions: Math.max(
+          0,
+          MAX_NORMAL_BIDS_PER_TENDER - (bidCount + 1),
+        ),
         validationSnapshot: L1
           ? {
               yourPrice: numericPrice,
@@ -280,9 +293,19 @@ export const getMyQuotationsForTender = async (req, res) => {
     }
 
     // Get all quotations submitted by this transporter for this tender
+    // const myQuotes = await Quotation.find({
+    //   tender: tenderId,
+    //   transportUser: transportUserId,
+    // }).sort({ createdAt: 1 });
+
     const myQuotes = await Quotation.find({
       tender: tenderId,
       transportUser: transportUserId,
+      $or: [
+        { phase: "normal" },
+        { phase: { $exists: false } },
+        { phase: null },
+      ],
     }).sort({ createdAt: 1 });
 
     // Attach signed file URLs
@@ -299,12 +322,22 @@ export const getMyQuotationsForTender = async (req, res) => {
         _id: q._id,
         price: q.price,
         vehicleNumber: q.vehicleNumber,
+        phase: q.phase || "normal",
         createdAt: q.createdAt,
         files: signedFiles,
       };
     });
 
-    res.status(200).json({ success: true, quotations: formatted });
+    res.status(200).json({
+      success: true,
+      quotations: formatted,
+      submittedCount: formatted.length,
+      maxSubmissions: MAX_NORMAL_BIDS_PER_TENDER,
+      remainingSubmissions: Math.max(
+        0,
+        MAX_NORMAL_BIDS_PER_TENDER - formatted.length,
+      ),
+    });
   } catch (error) {
     console.error("Error fetching transporter quotations:", error);
     res.status(500).json({ success: false, message: error.message });
