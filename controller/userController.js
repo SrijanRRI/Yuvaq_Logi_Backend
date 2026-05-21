@@ -193,6 +193,7 @@ export const login = async (req, res) => {
       .json({
         success: true,
         message: "Login successful",
+        token,
         data: userData,
         subscription: sub,
         subscriptionActive: isSubActive,
