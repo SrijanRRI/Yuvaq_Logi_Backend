@@ -8,7 +8,7 @@ import { getBestQuotesPerTransporter } from "../utils/ranking.js";
 import Quotation from "../models/quotationSchema.js";
 import { s3, BUCKET_NAME } from "../utils/minioClient.js";
 
-const POST_BID_MINUTES = 10;
+const POST_BID_MINUTES = 5;
 const timezone = "Asia/Kolkata";
 
 function withinPostBidStartWindow(tender, now) {
@@ -69,7 +69,7 @@ export const startPostBidNegotiation = async (req, res) => {
       return res.status(409).json({
         success: false,
         message:
-          "Post-bid can be started only within 10 minutes after bidding end.",
+          "Post-bid can be started only within 5 minutes after bidding end.",
         data: {
           biddingEnd: bidEnd,
           postBidHardEnd: new Date(
@@ -143,7 +143,7 @@ export const startPostBidNegotiation = async (req, res) => {
       try {
         await sendMail({
           to: u.email,
-          subject: "⏱️ Post-Bid Negotiation Started (10 mins) — LogiQ",
+          subject: "⏱️ Post-Bid Negotiation Started (5 mins) — LogiQ",
           html: `
             <div style="font-family:Arial;line-height:1.5">
               <h2 style="margin:0 0 10px;color:#059669">LogiQ</h2>

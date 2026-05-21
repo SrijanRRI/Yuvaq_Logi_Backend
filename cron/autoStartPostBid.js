@@ -6,7 +6,7 @@ import Quotation from "../models/quotationSchema.js";
 import User from "../models/userSchema.js";
 import { sendMail } from "../utils/sendMail.js";
 
-const POST_BID_MINUTES = 10;
+const POST_BID_MINUTES = 5;
 const CHECK_INTERVAL_MS = 15 * 1000;
 const timezone = "Asia/Kolkata";
 
