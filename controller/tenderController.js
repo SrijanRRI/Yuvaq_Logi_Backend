@@ -25,254 +25,6 @@ function pushSelectionHistory(tender, entry) {
   });
 }
 
-// export const createTender = async (req, res) => {
-//   try {
-//     const {
-//       shipmentPlanId,
-//       pickup,
-//       drop,
-//       vehicleRequirements,
-//       transporters,
-//       remarks,
-//       closeDate,
-//       deliveryWindow,
-//       biddingStart,
-//       biddingEnd, // (Soft End for now)
-//       biddingHardEnd, // ✅ NEW (optional for now)
-//       totalWeight,
-//       totalQuantity,
-//       projectName,
-//       projectCode,
-//       purchaseOrder,
-//       projectRemark,
-//       priceDifference, // <-- accept from frontend
-//       maxBidAmount,
-//       maxBidUnit,
-//       minBidAmount,
-//     } = req.body;
-
-//     // basic validations
-//     if (!projectName || !projectCode || !purchaseOrder) {
-//       return res.status(400).json({
-//         success: false,
-//         message: "Project name, code and PO are required",
-//       });
-//     }
-//     if (!biddingStart || !biddingEnd) {
-//       return res.status(400).json({
-//         success: false,
-//         message: "Bidding start and end time are required",
-//       });
-//     }
-//     if (!deliveryWindow?.from || !deliveryWindow?.to) {
-//       return res.status(400).json({
-//         success: false,
-//         message: "Delivery window (from and to dates) is required",
-//       });
-//     }
-
-//     if (!pickup?.pincode || !pickup?.address) {
-//       return res.status(400).json({
-//         success: false,
-//         message: "Pickup pincode and address are required",
-//       });
-//     }
-
-//     if (!drop?.pincode || !drop?.address) {
-//       return res.status(400).json({
-//         success: false,
-//         message: "Drop pincode and address are required",
-//       });
-//     }
-
-//     if (
-//       !vehicleRequirements ||
-//       !Array.isArray(vehicleRequirements) ||
-//       vehicleRequirements.length === 0
-//     ) {
-//       return res.status(400).json({
-//         success: false,
-//         message: "At least one vehicle requirement is required",
-//       });
-//     }
-
-//     // optional shipmentPlanId
-//     let shipmentPlanRef = null;
-//     if (shipmentPlanId) {
-//       if (!mongoose.isValidObjectId(shipmentPlanId)) {
-//         return res
-//           .status(400)
-//           .json({ success: false, message: "Invalid shipmentPlanId" });
-//       }
-//       shipmentPlanRef = shipmentPlanId;
-//     }
-
-//     // validate priceDifference if provided
-//     let priceDifferenceValue;
-//     if (
-//       priceDifference !== undefined &&
-//       priceDifference !== null &&
-//       priceDifference !== ""
-//     ) {
-//       const n = Number(priceDifference);
-//       if (!Number.isFinite(n)) {
-//         return res.status(400).json({
-//           success: false,
-//           message: "priceDifference must be a valid number",
-//         });
-//       }
-
-//       priceDifferenceValue = n;
-//     }
-
-//     // time conversions (IST → UTC)
-//     const timezone = "Asia/Kolkata";
-//     const utcBiddingStart = moment.tz(biddingStart, timezone).utc().toDate();
-//     const utcBiddingEnd = moment.tz(biddingEnd, timezone).utc().toDate();
-
-//     const utcBiddingSoftEnd = utcBiddingEnd;
-
-//     // ✅ if frontend doesn't send biddingHardEnd, hard = soft (no extension; same as today)
-//     const utcBiddingHardEnd = biddingHardEnd
-//       ? moment.tz(biddingHardEnd, timezone).utc().toDate()
-//       : utcBiddingEnd;
-
-//     // ✅ validate hard end >= soft end (only when provided)
-//     if (utcBiddingHardEnd.getTime() < utcBiddingSoftEnd.getTime()) {
-//       return res.status(400).json({
-//         success: false,
-//         message: "biddingHardEnd must be >= biddingEnd (soft end)",
-//       });
-//     }
-
-//     const utcDeliveryFrom = moment
-//       .tz(deliveryWindow.from, timezone)
-//       .utc()
-//       .toDate();
-//     const utcDeliveryTo = moment.tz(deliveryWindow.to, timezone).utc().toDate();
-
-//     let utcCloseDate = null;
-//     if (closeDate) {
-//       const [year, month, day] = closeDate.split("-").map(Number);
-//       utcCloseDate = new Date(Date.UTC(year, month - 1, day));
-//     }
-
-//     // normalize vehicle requirements
-//     const normalizedVehicles = vehicleRequirements.map((v) => ({
-//       vehicleId: v.vehicleId,
-//       category: String(v.category || "").trim(),
-//       subCategory: String(v.subCategory || "").trim(),
-//       quantity: Number(v.quantity || 1),
-//     }));
-
-//     // validate each vehicle row
-//     for (const v of normalizedVehicles) {
-//       if (!v.vehicleId || !mongoose.isValidObjectId(v.vehicleId)) {
-//         return res.status(400).json({
-//           success: false,
-//           message: "Valid vehicleId is required for each vehicle requirement",
-//         });
-//       }
-
-//       if (!v.category || !v.subCategory) {
-//         return res.status(400).json({
-//           success: false,
-//           message:
-//             "Each vehicle requirement must include category and subCategory",
-//         });
-//       }
-//       if (!Number.isFinite(v.quantity) || v.quantity < 1) {
-//         return res.status(400).json({
-//           success: false,
-//           message: "Vehicle quantity must be a number >= 1",
-//         });
-//       }
-//     }
-
-//     // ✅ validate bid limits
-//     const minAmt = Number(minBidAmount);
-//     const maxAmt = Number(maxBidAmount);
-
-//     if (!Number.isFinite(maxAmt) || maxAmt <= 0) {
-//       return res.status(400).json({
-//         success: false,
-//         message: "maxBidAmount must be a valid number > 0",
-//       });
-//     }
-
-//     if (!Number.isFinite(minAmt) || minAmt < 0) {
-//       return res.status(400).json({
-//         success: false,
-//         message: "minBidAmount must be a valid number >= 0",
-//       });
-//     }
-
-//     const allowedUnits = ["Per MT", "Per Tender"];
-//     if (!maxBidUnit || !allowedUnits.includes(String(maxBidUnit))) {
-//       return res.status(400).json({
-//         success: false,
-//         message: "maxBidUnit is required and must be Per MT or Per Tender",
-//       });
-//     }
-
-//     if (minAmt > maxAmt) {
-//       return res.status(400).json({
-//         success: false,
-//         message: "minBidAmount cannot be greater than maxBidAmount",
-//       });
-//     }
-
-//     const tenderPayload = {
-//       createdBy: req.user.id,
-//       shipmentPlan: shipmentPlanRef || null,
-//       pickup,
-//       drop,
-//       vehicleRequirements: normalizedVehicles,
-//       transporters,
-//       remarks: remarks || "",
-//       closeDate: utcCloseDate,
-//       biddingStart: utcBiddingStart,
-//       biddingEnd: utcBiddingSoftEnd,
-
-//       //  store soft/hard explicitly
-//       biddingSoftEnd: utcBiddingSoftEnd,
-//       biddingHardEnd: utcBiddingHardEnd,
-
-//       deliveryWindow: { from: utcDeliveryFrom, to: utcDeliveryTo },
-//       totalWeight,
-//       totalQuantity,
-//       projectName,
-//       projectCode,
-//       purchaseOrder,
-//       projectRemark: projectRemark || "",
-//       minBidAmount: minAmt,
-//       maxBidAmount: maxAmt,
-//       maxBidUnit: String(maxBidUnit),
-
-//       status: "open",
-//       publishedAt: new Date(),
-//       draftSubmitAt: null,
-//       draftCancelledAt: null,
-//       draftFinalizedAt: null,
-//       draftProcessingAt: null,
-//       lastEditedAt: null,
-//     };
-
-//     // only set if provided so Mongoose default can apply otherwise
-//     if (priceDifferenceValue !== undefined) {
-//       tenderPayload.priceDifference = priceDifferenceValue;
-//     }
-
-//     const tender = new Tender(tenderPayload);
-//     await tender.save();
-
-//     res.status(201).json({ success: true, data: tender });
-//   } catch (error) {
-//     console.error("Tender creation failed:", error);
-//     res.status(500).json({ success: false, message: error.message });
-//   }
-// };
-
 export const createTender = async (req, res) => {
   try {
     const payload = buildTenderPayloadFromBody(req.body, req.user.id);
@@ -401,29 +153,95 @@ export const finalizeTender = async (req, res) => {
 
     /* ------------------------------ helpers (NEW) ------------------------------ */
 
-    const join = (...parts) => parts.filter(Boolean).join(", ");
+    // const join = (...parts) => parts.filter(Boolean).join(", ");
+
+    // const formatLocation = (loc) => {
+    //   // New schema (pickup/drop)
+    //   if (loc && typeof loc === "object") {
+    //     const line = join(
+    //       loc.address,
+    //       loc.location,
+    //       loc.city,
+    //       loc.district,
+    //       loc.state,
+    //       loc.pincode,
+    //       loc.country,
+    //     );
+    //     return line || "-";
+    //   }
+
+    //   // Fallback for old schema (dispatchLocation/address/pincode)
+    //   const legacy = join(
+    //     tender.dispatchLocation,
+    //     tender.address,
+    //     tender.pincode,
+    //   );
+    //   return legacy || "-";
+    // };
+
+    const cleanText = (value) => String(value || "").trim();
+
+    const hasTextInside = (base, part) => {
+      const b = cleanText(base).toLowerCase();
+      const p = cleanText(part).toLowerCase();
+
+      if (!b || !p) return false;
+
+      return b.includes(p);
+    };
+
+    const joinUniqueLocationParts = (...parts) => {
+      const result = [];
+
+      for (const part of parts) {
+        const clean = cleanText(part);
+        if (!clean) continue;
+
+        const alreadyExists = result.some((existing) => {
+          const a = cleanText(existing).toLowerCase();
+          const b = clean.toLowerCase();
+
+          return a === b || a.includes(b) || b.includes(a);
+        });
+
+        if (!alreadyExists) {
+          result.push(clean);
+        }
+      }
+
+      return result.join(", ");
+    };
 
     const formatLocation = (loc) => {
-      // New schema (pickup/drop)
       if (loc && typeof loc === "object") {
-        const line = join(
-          loc.address,
+        const address = cleanText(loc.address);
+
+        const extraParts = [
           loc.location,
           loc.city,
           loc.district,
           loc.state,
           loc.pincode,
           loc.country,
-        );
+        ].filter((part) => {
+          const clean = cleanText(part);
+          if (!clean) return false;
+
+          // If full address already contains this value, do not repeat it.
+          return !hasTextInside(address, clean);
+        });
+
+        const line = joinUniqueLocationParts(address, ...extraParts);
+
         return line || "-";
       }
 
-      // Fallback for old schema (dispatchLocation/address/pincode)
-      const legacy = join(
+      const legacy = joinUniqueLocationParts(
         tender.dispatchLocation,
         tender.address,
         tender.pincode,
       );
+
       return legacy || "-";
     };
 
