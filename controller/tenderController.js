@@ -693,8 +693,15 @@ export const getTenderQuotations = async (req, res) => {
     // -----------------------------
     // 1) Load ALL quotes for tender
     // -----------------------------
+
+    const canRevealTransporterNames =
+      String(tender.status || "").toLowerCase() === "finalized";
+
     const allQuotes = await Quotation.find({ tender: tenderId })
-      .populate("transportUser", "name email")
+      .populate(
+        "transportUser",
+        canRevealTransporterNames ? "name email phone" : "_id",
+      )
       .sort({ price: 1, createdAt: 1 });
 
     // ---------------------------------------------

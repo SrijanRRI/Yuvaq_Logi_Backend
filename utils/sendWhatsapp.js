@@ -15,7 +15,7 @@ export async function sendWhatsAppTemplate(toPhoneE164, values) {
     to: toPhoneE164,
     type: "template",
     template: {
-      name: "logiyatra_tender_notification",
+      name: "logiq_tender_notification",
       language: {
         code: "hi",
       },
@@ -26,7 +26,7 @@ export async function sendWhatsAppTemplate(toPhoneE164, values) {
             {
               type: "image",
               image: {
-                link: "https://i.postimg.cc/N0sVbVTh/Logi-Yatra-Logo.png",
+                link: "https://i.postimg.cc/NGDHK6pc/IMG-20260325-WA0028.jpg",
               },
             },
           ],
