@@ -14,7 +14,11 @@ export default function autoEndPostBid() {
           "postBid.endsAt": { $lte: now },
         },
         {
-          $set: { "postBid.status": "ended" },
+          $set: {
+            "postBid.status": "ended",
+            "postBid.endedAt": now,
+            "postBid.endedReason": "time_expired",
+          },
         },
       );
 
