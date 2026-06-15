@@ -10,6 +10,7 @@ export async function sendWhatsAppTemplate(toPhoneE164, values) {
     "Content-Type": "application/json",
   };
 
+  // new LogiQ template : 
   // const data = {
   //   messaging_product: "whatsapp",
   //   to: toPhoneE164,
@@ -64,6 +65,8 @@ export async function sendWhatsAppTemplate(toPhoneE164, values) {
   //     ],
   //   },
   // };
+
+  // old RRIspat template 
   const data = {
     messaging_product: "whatsapp",
     to: toPhoneE164,
