@@ -10,12 +10,66 @@ export async function sendWhatsAppTemplate(toPhoneE164, values) {
     "Content-Type": "application/json",
   };
 
+  // const data = {
+  //   messaging_product: "whatsapp",
+  //   to: toPhoneE164,
+  //   type: "template",
+  //   template: {
+  //     name: "logiq_tender_notification",
+  //     language: {
+  //       code: "hi",
+  //     },
+  //     components: [
+  //       {
+  //         type: "header",
+  //         parameters: [
+  //           {
+  //             type: "image",
+  //             image: {
+  //               link: "https://i.postimg.cc/NGDHK6pc/IMG-20260325-WA0028.jpg",
+  //             },
+  //           },
+  //         ],
+  //       },
+  //       {
+  //         type: "body",
+  //         parameters: [
+  //           {
+  //             type: "text",
+  //             text: values.dispatch_location,
+  //             parameter_name: "dispatch_location",
+  //           },
+  //           {
+  //             type: "text",
+  //             text: values.delivery_from,
+  //             parameter_name: "delivery_from",
+  //           },
+  //           {
+  //             type: "text",
+  //             text: values.delivery_to,
+  //             parameter_name: "delivery_to",
+  //           },
+  //           {
+  //             type: "text",
+  //             text: values.start_datetime,
+  //             parameter_name: "start_datetime",
+  //           },
+  //           {
+  //             type: "text",
+  //             text: values.end_datetime,
+  //             parameter_name: "end_datetime",
+  //           },
+  //         ],
+  //       },
+  //     ],
+  //   },
+  // };
   const data = {
     messaging_product: "whatsapp",
     to: toPhoneE164,
     type: "template",
     template: {
-      name: "logiq_tender_notification",
+      name: "logiyatra_tender_notification",
       language: {
         code: "hi",
       },
@@ -26,7 +80,7 @@ export async function sendWhatsAppTemplate(toPhoneE164, values) {
             {
               type: "image",
               image: {
-                link: "https://i.postimg.cc/NGDHK6pc/IMG-20260325-WA0028.jpg",
+                link: "https://i.postimg.cc/N0sVbVTh/Logi-Yatra-Logo.png",
               },
             },
           ],
@@ -64,14 +118,14 @@ export async function sendWhatsAppTemplate(toPhoneE164, values) {
       ],
     },
   };
-  try {  
+  try {
     const response = await axios.post(url, data, { headers });
-    console.log('response in whatsapp' , response.data)
+    console.log("response in whatsapp", response.data);
     return response.data;
   } catch (error) {
     console.error(
       "❌ Failed to send WhatsApp template:",
-      error.response?.data || error.message
+      error.response?.data || error.message,
     );
   }
 }
