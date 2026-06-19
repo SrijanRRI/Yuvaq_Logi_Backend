@@ -10,8 +10,8 @@ const POST_BID_MINUTES = 5;
 const CHECK_INTERVAL_MS = 15 * 1000;
 const timezone = "Asia/Kolkata";
 
-const AUTO_POST_BID_MIN_PERCENT = 0.8; // L1 - 20%
-const AUTO_POST_BID_MAX_PERCENT = 0.9; // L1 - 10%
+const AUTO_POST_BID_MIN_PERCENT = 0.8; // L1 - 20% (below L1) 
+const AUTO_POST_BID_MAX_PERCENT = 0.985; // L1 - 1.5% (below L1)
 
 const autoPostBidEligibleTenderFilter = {
   status: { $in: ["open", "quoted", "closed"] },
