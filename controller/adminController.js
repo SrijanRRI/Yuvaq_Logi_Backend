@@ -166,21 +166,21 @@ export const approveUserTwoStep = async (req, res) => {
         await transporter.sendMail({
           to: notifyDoc.email,
           from: process.env.SMTP_USER,
-          subject: "Account Approved for RRISPAT",
+          subject: "Your LogiQ Account Has Been Approved",
           html: `<!DOCTYPE html>
-<html><head><meta charset="UTF-8"><title>Account Approved</title></head>
-<body style="font-family: Arial, sans-serif; line-height: 1.6;">
-  <p>Hello ${notifyDoc.name},</p>
-  <p>Your transport user account has been <strong>approved</strong> by the admins. You can now log in:</p>
-  <p><a href="https://logiyatra.rrispat.in">Click here to login</a></p>
-  <p>Thank you for your patience.</p>
-  <br/>
-  <p>Best regards,</p>
-  <p><strong>RR ISPAT Support Team</strong><br/>
-    Email: techsupport@rrispat.com<br/>
-    Website: <a href="https://project.rrispat.in">rrispat.com</a>
-  </p>
-</body></html>`,
+          <html><head><meta charset="UTF-8"><title>Account Approved</title></head>
+          <body style="font-family: Arial, sans-serif; line-height: 1.6;">
+            <p>Hello ${notifyDoc.name},</p>
+            <p>Your transport user account has been <strong>approved</strong> by the admins. You can now log in:</p>
+            <p><a href="https://logiq.yuvaq.com/">Click here to login</a></p>
+            <p>Thank you for your patience.</p>
+            <br/>
+            <p>Best regards,</p>
+            <p><strong>RR ISPAT Support Team</strong><br/>
+              Email: techsupport@rrispat.com<br/>
+              Website: <a href="https://project.rrispat.in">rrispat.com</a>
+            </p>
+          </body></html>`,
         });
       } catch (e) {
         console.error("Error sending final approval email:", e);
@@ -264,28 +264,28 @@ export const rejectUser = async (req, res) => {
         to: userEmail,
         from: process.env.SMTP_USER,
         subject: "Account Application Status for RRISPAT",
-        html: `!DOCTYPE html>
-    <html>
-      <head>
-        <meta charset="UTF-8">
-        <title>Account Application Declined</title>
-      </head>
-      <body style="font-family: Arial, sans-serif; line-height: 1.6;">
-        <p>Hello ${userName},</p>
+        html: `<!DOCTYPE html>
+        <html>
+          <head>
+            <meta charset="UTF-8">
+            <title>Account Application Declined</title>
+          </head>
+          <body style="font-family: Arial, sans-serif; line-height: 1.6;">
+            <p>Hello ${userName},</p>
 
-        <p>We regret to inform you that your application for a <strong>transport user account</strong> has been declined.</p>
+            <p>We regret to inform you that your account application has been <strong>declined</strong>.</p>
 
-        <p>If you believe this was in error or would like more information, please contact our support team using the details below.</p>
+            <p>If you believe this was in error or would like more information, please contact our support team using the details below.</p>
 
-        <br />
+            <br />
 
-        <p>Best regards,</p>
-        <p><strong>RR ISPAT Support Team</strong><br/>
-          Email: techsupport@rrispat.com<br/>
-          Website: <a href="https://project.rrispat.in">rrispat.com</a>
-        </p>
-      </body>
-    </html>`,
+            <p>Best regards,</p>
+            <p><strong>RR ISPAT Support Team</strong><br/>
+              Email: techsupport@rrispat.com<br/>
+              Website: <a href="https://project.rrispat.in">rrispat.com</a>
+            </p>
+          </body>
+        </html>`,
       });
     } catch (emailError) {
       console.error("Error sending rejection email:", emailError);

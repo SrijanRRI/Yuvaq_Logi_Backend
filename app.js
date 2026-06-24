@@ -29,7 +29,7 @@ autoStartPostBid();
 autoEndPostBid();
 startFinalizeDraftTenders();
 
-app.use(cors({ origin: [process.env.CLIENT_URL,"http://localhost:5173" , "http://192.168.13.86:85" , "https://logiq.yuvaq.com"] , credentials: true }));
+app.use(cors({ origin: [process.env.CLIENT_URL,"http://localhost:5173" , "http://192.168.13.86:85" , "http://192.168.13.86:89", "https://logiqtest.yuvaq.com" ,  "https://logiq.yuvaq.com" , "http://192.168.13.86:90" , "https://logiqofficial.yuvaq.com"] , credentials: true }));
 
 app.use(express.json({
   verify: (req, res, buf) => {

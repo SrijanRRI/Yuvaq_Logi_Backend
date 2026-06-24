@@ -3,11 +3,12 @@ import Tender from "../models/tenderSchema.js";
 import { s3, BUCKET_NAME } from "../utils/minioClient.js";
 import { generateSignedUrl } from "../utils/minioClient.js";
 
+const MAX_NORMAL_BIDS_PER_TENDER = 5;
+
 export const submitQuotation = async (req, res) => {
   try {
     const { price } = req.body;
 
-    // ✅ vehicleNumber optional now
     const vehicleNumber =
       typeof req.body.vehicleNumber === "string" &&
       req.body.vehicleNumber.trim()
@@ -17,7 +18,6 @@ export const submitQuotation = async (req, res) => {
     const userId = req.user.id;
     const tenderId = req.params.id;
 
-    // Basic validation
     const numericPrice = Number(price);
     if (!Number.isFinite(numericPrice) || numericPrice <= 0) {
       return res.status(400).json({
@@ -26,7 +26,6 @@ export const submitQuotation = async (req, res) => {
       });
     }
 
-    // 1) Validate Tender
     const tender = await Tender.findById(tenderId);
     if (!tender || tender.status !== "open") {
       return res.status(400).json({
@@ -43,115 +42,157 @@ export const submitQuotation = async (req, res) => {
       });
     }
 
-    // ✅ Fallback compatibility:
-    // if old docs have no soft/hard, treat hard = biddingEnd (no extension)
     const softEnd = tender.biddingSoftEnd || tender.biddingEnd;
     const hardEnd = tender.biddingHardEnd || tender.biddingEnd;
 
-    // 🔹 Use tender.priceDifference (fallback to 30 if missing/invalid)
     const minDelta =
       Number.isFinite(Number(tender.priceDifference)) &&
-      Number(tender.priceDifference) >= 0
+      Number(tender.priceDifference) > 0
         ? Number(tender.priceDifference)
-        : 30;
+        : 25;
 
-    // =========================================================
-    // ✅ UNLIMITED BIDDING ENABLED (3-bid restriction removed)
-    // Previously:
-    // 2) Enforce 3-bid limit per user for this tender
-    //
-    // const bidCount = await Quotation.countDocuments({
-    //   tender: tenderId,
-    //   transportUser: userId,
-    //   phase: "normal",
-    // });
-    //
-    // if (bidCount >= 3) {
-    //   return res.status(403).json({
-    //     success: false,
-    //     message: "You have reached the maximum of 3 bids for this tender",
-    //   });
-    // }
-    // =========================================================
+    const normalPhaseFilter = {
+      $or: [
+        { phase: "normal" },
+        { phase: { $exists: false } },
+        { phase: null },
+      ],
+    };
 
-    // 2.5) Enforce: transporter must always quote LOWER than their previous quote (strictly)
-    const prevQuote = await Quotation.findOne({
+    // Count this transporter's normal bids for this tender
+    const bidCount = await Quotation.countDocuments({
       tender: tenderId,
       transportUser: userId,
-      phase: "normal",
-    })
-      .sort({ createdAt: -1 })
-      .select("price createdAt")
-      .lean();
-
-    if (prevQuote) {
-      // must be strictly less than previous quote
-      if (numericPrice >= Number(prevQuote.price)) {
-        return res.status(400).json({
-          success: false,
-          message:
-            "New quotation must be strictly lower than your previous quotation",
-          data: {
-            previousPrice: Number(prevQuote.price),
-            previousCreatedAt: prevQuote.createdAt,
-            yourPrice: numericPrice,
-          },
-        });
-      }
-    }
-
-    // 3) Compute current L1 (lowest among each transporter's best price)
-    const allQuotes = await Quotation.find({
-      tender: tenderId,
-      phase: "normal",
-    }).sort({
-      price: 1,
-      createdAt: 1,
+      ...normalPhaseFilter,
     });
 
-    const bestQuotesMap = new Map(); // transportUserId => bestQuotation
-    for (const q of allQuotes) {
-      const uid = q.transportUser.toString();
-      if (!bestQuotesMap.has(uid)) {
-        bestQuotesMap.set(uid, q); // first is the lowest due to sort
-      }
+    const isFirstBidForThisTransporter = bidCount === 0;
+
+    if (bidCount >= MAX_NORMAL_BIDS_PER_TENDER) {
+      return res.status(403).json({
+        success: false,
+        message:
+          "You have reached the maximum limit of 5 quotations for this tender.",
+        data: {
+          submittedCount: bidCount,
+          maxSubmissions: MAX_NORMAL_BIDS_PER_TENDER,
+          remainingSubmissions: 0,
+        },
+      });
     }
 
     let L1 = null;
-    for (const [, q] of bestQuotesMap.entries()) {
-      if (
-        !L1 ||
-        q.price < L1.price ||
-        (q.price === L1.price && q.createdAt < L1.createdAt)
-      ) {
-        L1 = q;
-      }
-    }
 
-    // 4) Rule: if new price is below L1, it must beat L1 by at least tender.priceDifference
-    if (L1 && numericPrice < L1.price) {
-      const diff = L1.price - numericPrice;
-      if (diff < minDelta) {
-        return res.status(400).json({
-          success: false,
-          message: `Given quoted price difference must be ${minDelta}`,
-          data: {
-            currentL1: {
-              quotationId: L1._id,
-              transportUser: L1.transportUser,
-              createdAt: L1.createdAt,
-              vehicleNumber: L1.vehicleNumber,
+    /*
+      ✅ Main change:
+      First bid of every transporter will NOT be compared with L1.
+      L1 validation starts only from second bid onwards.
+    */
+    if (!isFirstBidForThisTransporter) {
+      // Transporter must quote lower than their own previous quote
+      const prevQuote = await Quotation.findOne({
+        tender: tenderId,
+        transportUser: userId,
+        ...normalPhaseFilter,
+      })
+        .sort({ createdAt: -1 })
+        .select("price createdAt")
+        .lean();
+
+      if (prevQuote) {
+        if (numericPrice >= Number(prevQuote.price)) {
+          return res.status(400).json({
+            success: false,
+            message:
+              "New quotation must be strictly lower than your previous quotation",
+            data: {
+              previousPrice: Number(prevQuote.price),
+              previousCreatedAt: prevQuote.createdAt,
+              yourPrice: numericPrice,
             },
-            yourPrice: numericPrice,
-            difference: diff,
-            minimumRequiredDifference: minDelta,
-          },
-        });
+          });
+        }
+      }
+
+      // Calculate current L1 from each transporter's best quote
+      const allQuotes = await Quotation.find({
+        tender: tenderId,
+        ...normalPhaseFilter,
+      }).sort({
+        price: 1,
+        createdAt: 1,
+      });
+
+      const bestQuotesMap = new Map();
+
+      for (const q of allQuotes) {
+        const uid = q.transportUser.toString();
+
+        if (!bestQuotesMap.has(uid)) {
+          bestQuotesMap.set(uid, q);
+        }
+      }
+
+      for (const [, q] of bestQuotesMap.entries()) {
+        if (
+          !L1 ||
+          q.price < L1.price ||
+          (q.price === L1.price && q.createdAt < L1.createdAt)
+        ) {
+          L1 = q;
+        }
+      }
+
+      if (L1) {
+        const currentL1Price = Number(L1.price);
+        const diff = currentL1Price - numericPrice;
+
+        if (numericPrice >= currentL1Price) {
+          return res.status(400).json({
+            success: false,
+            message: `Your quote must be lower than current lowest quote ₹${currentL1Price.toLocaleString(
+              "en-IN",
+            )}. Minimum difference required is ₹${minDelta}.`,
+            data: {
+              currentL1: {
+                quotationId: L1._id,
+                transportUser: L1.transportUser,
+                price: currentL1Price,
+                createdAt: L1.createdAt,
+                vehicleNumber: L1.vehicleNumber,
+              },
+              yourPrice: numericPrice,
+              difference: diff,
+              minimumRequiredDifference: minDelta,
+            },
+          });
+        }
+
+        if (diff < minDelta) {
+          return res.status(400).json({
+            success: false,
+            message: `Your quote must be at least ₹${minDelta} lower than current lowest quote ₹${currentL1Price.toLocaleString(
+              "en-IN",
+            )}.`,
+            data: {
+              currentL1: {
+                quotationId: L1._id,
+                transportUser: L1.transportUser,
+                price: currentL1Price,
+                createdAt: L1.createdAt,
+                vehicleNumber: L1.vehicleNumber,
+              },
+              yourPrice: numericPrice,
+              difference: diff,
+              minimumRequiredDifference: minDelta,
+            },
+          });
+        }
       }
     }
 
-    // 5) Upload file (if provided)
     let uploadedFiles = [];
+
     if (req.file) {
       const file = req.file;
       const filename = Date.now() + "-" + file.originalname;
@@ -173,30 +214,22 @@ export const submitQuotation = async (req, res) => {
       });
     }
 
-    // 6) Save Quotation
     const quotation = new Quotation({
       tender: tender._id,
       transportUser: userId,
       price: numericPrice,
-      // ✅ will be undefined if not provided (allowed now)
       vehicleNumber,
       files: uploadedFiles,
       phase: "normal",
     });
+
     await quotation.save();
 
-    // ✅ Link quotation to tender safely (no stale overwrite)
     await Tender.updateOne(
       { _id: tenderId },
       { $push: { quotations: quotation._id } },
     );
 
-    // ==========================================================
-    // ✅ SOFT CLOSE EXTENSION (only if hardEnd > current biddingEnd)
-    // Defaults (can be overridden via env):
-    // - if bid comes in last 5 mins => extend by 5 mins
-    // - but never beyond hardEnd
-    // ==========================================================
     const EXT_WINDOW_MIN = Number(process.env.BID_EXT_WINDOW_MINUTES || 5);
     const EXT_INC_MIN = Number(process.env.BID_EXT_INCREMENT_MINUTES || 5);
 
@@ -211,12 +244,10 @@ export const submitQuotation = async (req, res) => {
     const inLastWindow =
       nowMs >= currentEndMs - EXT_WINDOW_MS && nowMs <= currentEndMs;
 
-    // can extend only if hardEnd is later than current end
     if (inLastWindow && currentEndMs < hardEndMs) {
       const nextEndMs = Math.min(currentEndMs + EXT_INC_MS, hardEndMs);
       const nextEnd = new Date(nextEndMs);
 
-      // ✅ atomic: only extend if biddingEnd is still the same as we saw
       await Tender.findOneAndUpdate(
         { _id: tenderId, biddingEnd: tender.biddingEnd },
         {
@@ -234,27 +265,23 @@ export const submitQuotation = async (req, res) => {
       );
     }
 
-    // // 7) Link quotation to tender
-    // tender.quotations.push(quotation._id);
-    // await tender.save();
-
     return res.status(201).json({
       success: true,
       message: "Quotation submitted successfully.",
       data: {
         quotation,
-        validationSnapshot: L1
-          ? {
-              yourPrice: numericPrice,
-              wasBelowL1: numericPrice < L1.price,
-              requiredMinDeltaIfBelowL1: minDelta,
-            }
-          : {
-              currentL1PriceBeforeSubmit: null,
-              yourPrice: numericPrice,
-              wasBelowL1: false,
-              requiredMinDeltaIfBelowL1: minDelta,
-            },
+        submittedCount: bidCount + 1,
+        maxSubmissions: MAX_NORMAL_BIDS_PER_TENDER,
+        remainingSubmissions: Math.max(
+          0,
+          MAX_NORMAL_BIDS_PER_TENDER - (bidCount + 1),
+        ),
+        validationSnapshot: {
+          isFirstBidForThisTransporter,
+          yourPrice: numericPrice,
+          currentL1PriceBeforeSubmit: L1 ? Number(L1.price) : null,
+          requiredMinDeltaIfBelowL1: minDelta,
+        },
       },
     });
   } catch (error) {
@@ -280,9 +307,19 @@ export const getMyQuotationsForTender = async (req, res) => {
     }
 
     // Get all quotations submitted by this transporter for this tender
+    // const myQuotes = await Quotation.find({
+    //   tender: tenderId,
+    //   transportUser: transportUserId,
+    // }).sort({ createdAt: 1 });
+
     const myQuotes = await Quotation.find({
       tender: tenderId,
       transportUser: transportUserId,
+      $or: [
+        { phase: "normal" },
+        { phase: { $exists: false } },
+        { phase: null },
+      ],
     }).sort({ createdAt: 1 });
 
     // Attach signed file URLs
@@ -299,12 +336,22 @@ export const getMyQuotationsForTender = async (req, res) => {
         _id: q._id,
         price: q.price,
         vehicleNumber: q.vehicleNumber,
+        phase: q.phase || "normal",
         createdAt: q.createdAt,
         files: signedFiles,
       };
     });
 
-    res.status(200).json({ success: true, quotations: formatted });
+    res.status(200).json({
+      success: true,
+      quotations: formatted,
+      submittedCount: formatted.length,
+      maxSubmissions: MAX_NORMAL_BIDS_PER_TENDER,
+      remainingSubmissions: Math.max(
+        0,
+        MAX_NORMAL_BIDS_PER_TENDER - formatted.length,
+      ),
+    });
   } catch (error) {
     console.error("Error fetching transporter quotations:", error);
     res.status(500).json({ success: false, message: error.message });

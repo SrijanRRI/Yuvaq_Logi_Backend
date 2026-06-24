@@ -6,12 +6,12 @@ import Quotation from "../models/quotationSchema.js";
 import User from "../models/userSchema.js";
 import { sendMail } from "../utils/sendMail.js";
 
-const POST_BID_MINUTES = 10;
+const POST_BID_MINUTES = 5;
 const CHECK_INTERVAL_MS = 15 * 1000;
 const timezone = "Asia/Kolkata";
 
-const AUTO_POST_BID_MIN_PERCENT = 0.8; // L1 - 20%
-const AUTO_POST_BID_MAX_PERCENT = 0.9; // L1 - 10%
+const AUTO_POST_BID_MIN_PERCENT = 0.8; // L1 - 20% (below L1) 
+const AUTO_POST_BID_MAX_PERCENT = 0.995; // L1 - 0.5% (below L1)
 
 const autoPostBidEligibleTenderFilter = {
   status: { $in: ["open", "quoted", "closed"] },
@@ -186,9 +186,21 @@ async function autoStartPostBidForTender(tender) {
     return;
   }
 
+  // const eligibleTransporters = [
+  //   ...new Set(
+  //     bestNormalQuotes
+  //       .map((q) => q.transportUser)
+  //       .filter(Boolean)
+  //       .map(String),
+  //   ),
+  // ];
+
+  // ✅ Eligible = TOP 5 participating transporters only
+  const top5NormalQuotes = bestNormalQuotes.slice(0, 5);
+
   const eligibleTransporters = [
     ...new Set(
-      bestNormalQuotes
+      top5NormalQuotes
         .map((q) => q.transportUser)
         .filter(Boolean)
         .map(String),
@@ -254,8 +266,12 @@ async function autoStartPostBidForTender(tender) {
     endsAt,
   });
 
+  // console.log(
+  //   `[autoStartPostBid] started ${tenderId}. L1=${l1Price}, range=${range.rangeMin}-${range.rangeMax}, eligible=${eligibleTransporters.length}`,
+  // );
+
   console.log(
-    `[autoStartPostBid] started ${tenderId}. L1=${l1Price}, range=${range.rangeMin}-${range.rangeMax}, eligible=${eligibleTransporters.length}`,
+    `[autoStartPostBid] started ${tenderId}. L1=${l1Price}, range=${range.rangeMin}-${range.rangeMax}, top5Eligible=${eligibleTransporters.length}`,
   );
 }
 

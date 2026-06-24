@@ -8,7 +8,7 @@ import { getBestQuotesPerTransporter } from "../utils/ranking.js";
 import Quotation from "../models/quotationSchema.js";
 import { s3, BUCKET_NAME } from "../utils/minioClient.js";
 
-const POST_BID_MINUTES = 10;
+const POST_BID_MINUTES = 5;
 const timezone = "Asia/Kolkata";
 
 function withinPostBidStartWindow(tender, now) {
@@ -16,6 +16,102 @@ function withinPostBidStartWindow(tender, now) {
   const hardEnd = new Date(bidEnd.getTime() + POST_BID_MINUTES * 60 * 1000);
   return now >= bidEnd && now <= hardEnd;
 }
+
+const getObjectIdList = (ids = []) => {
+  return [...new Set(ids.map((id) => String(id)).filter(Boolean))];
+};
+
+const maybeEndPostBidEarly = async (tenderId) => {
+  const tender = await Tender.findById(tenderId)
+    .select("postBid selectedQuotation selection status")
+    .lean();
+
+  if (!tender) {
+    return { ended: false, reason: "tender_not_found" };
+  }
+
+  if (String(tender?.postBid?.status || "").toLowerCase() !== "active") {
+    return { ended: false, reason: "post_bid_not_active" };
+  }
+
+  const eligibleTransporters = getObjectIdList(
+    tender?.postBid?.eligibleTransporters || [],
+  );
+
+  if (!eligibleTransporters.length) {
+    return { ended: false, reason: "no_eligible_transporters" };
+  }
+
+  const startedAt =
+    tender?.postBid?.startedAt || tender?.postBid?.startsAt || null;
+
+  const postBidQuoteFilter = {
+    tender: tenderId,
+    transportUser: { $in: eligibleTransporters },
+    $or: [
+      { phase: "postBid" },
+      { phase: "postbid" },
+      { phase: "post_bid" },
+      { isPostBid: true },
+      { postBid: true },
+      { bidPhase: "postBid" },
+      { bidPhase: "postbid" },
+      { bidPhase: "post_bid" },
+    ],
+  };
+
+  if (startedAt) {
+    postBidQuoteFilter.createdAt = {
+      $gte: new Date(startedAt),
+    };
+  }
+
+  const submittedTransporters = await Quotation.distinct(
+    "transportUser",
+    postBidQuoteFilter,
+  );
+
+  const submittedSet = new Set(submittedTransporters.map((id) => String(id)));
+
+  const allEligibleSubmitted = eligibleTransporters.every((id) =>
+    submittedSet.has(String(id)),
+  );
+
+  if (!allEligibleSubmitted) {
+    return {
+      ended: false,
+      reason: "waiting_for_more_quotes",
+      eligibleCount: eligibleTransporters.length,
+      submittedCount: submittedSet.size,
+    };
+  }
+
+  const now = new Date();
+
+  const updatedTender = await Tender.findOneAndUpdate(
+    {
+      _id: tenderId,
+      "postBid.status": "active",
+    },
+    {
+      $set: {
+        "postBid.status": "ended",
+        "postBid.endsAt": now,
+        "postBid.endedAt": now,
+        "postBid.endedReason": "all_eligible_submitted",
+      },
+    },
+    { new: true },
+  ).lean();
+
+  return {
+    ended: !!updatedTender,
+    reason: updatedTender ? "all_eligible_submitted" : "already_ended",
+    eligibleCount: eligibleTransporters.length,
+    submittedCount: submittedSet.size,
+    postBid: updatedTender?.postBid || null,
+  };
+};
 
 export const startPostBidNegotiation = async (req, res) => {
   try {
@@ -69,7 +165,7 @@ export const startPostBidNegotiation = async (req, res) => {
       return res.status(409).json({
         success: false,
         message:
-          "Post-bid can be started only within 10 minutes after bidding end.",
+          "Post-bid can be started only within 5 minutes after bidding end.",
         data: {
           biddingEnd: bidEnd,
           postBidHardEnd: new Date(
@@ -92,19 +188,23 @@ export const startPostBidNegotiation = async (req, res) => {
     const bidEnd = new Date(tender.biddingEnd);
     const endsAt = new Date(bidEnd.getTime() + POST_BID_MINUTES * 60 * 1000);
 
-    // freeze eligible top3 based on NORMAL quotes only
-    // const bestNormal = await getBestQuotesPerTransporter({ tenderId: tender._id, phase: "normal" });
-    // const top3 = bestNormal.slice(0, 3);
+    // // ✅ Eligible = ALL participating transporters (unique) based on NORMAL quotes
+    // const bestNormal = await getBestQuotesPerTransporter({
+    //   tenderId: tender._id,
+    //   phase: "normal",
+    // });
 
-    // const eligibleIds = top3.map((q) => q.transportUser).filter(Boolean);
+    // const eligibleIds = bestNormal.map((q) => q.transportUser).filter(Boolean);
 
-    // ✅ Eligible = ALL participating transporters (unique) based on NORMAL quotes
+    // ✅ Eligible = TOP 5 participating transporters based on best NORMAL quotes
     const bestNormal = await getBestQuotesPerTransporter({
       tenderId: tender._id,
       phase: "normal",
     });
 
-    const eligibleIds = bestNormal.map((q) => q.transportUser).filter(Boolean);
+    const top5Normal = bestNormal.slice(0, 5);
+
+    const eligibleIds = top5Normal.map((q) => q.transportUser).filter(Boolean);
 
     if (!eligibleIds.length) {
       return res.status(409).json({
@@ -139,7 +239,7 @@ export const startPostBidNegotiation = async (req, res) => {
       try {
         await sendMail({
           to: u.email,
-          subject: "⏱️ Post-Bid Negotiation Started (10 mins) — LogiQ",
+          subject: "⏱️ Post-Bid Negotiation Started (5 mins) — LogiQ",
           html: `
             <div style="font-family:Arial;line-height:1.5">
               <h2 style="margin:0 0 10px;color:#059669">LogiQ</h2>
@@ -159,7 +259,7 @@ export const startPostBidNegotiation = async (req, res) => {
 
     return res.status(200).json({
       success: true,
-      message: "Post-bid started and notifications sent.",
+      message: "Post-bid started and notifications sent to top 5 transporters.",
       postBid: tender.postBid,
       eligibleCount: eligibleIds.length,
     });
@@ -182,8 +282,12 @@ export const submitPostBidQuotation = async (req, res) => {
 
     const { price, vehicleNumber } = req.body;
     const numericPrice = Number(price);
+
     if (!Number.isFinite(numericPrice) || numericPrice <= 0) {
-      return res.status(400).json({ success: false, message: "Invalid price" });
+      return res.status(400).json({
+        success: false,
+        message: "Invalid price",
+      });
     }
 
     // if (!vehicleNumber || !String(vehicleNumber).trim()) {
@@ -193,12 +297,15 @@ export const submitPostBidQuotation = async (req, res) => {
     // }
 
     const tender = await Tender.findById(tenderId).lean();
-    if (!tender)
+
+    if (!tender) {
       return res
         .status(404)
         .json({ success: false, message: "Tender not found" });
+    }
 
     const pb = tender.postBid;
+
     if (!pb?.enabled || pb.status !== "active" || !pb.endsAt) {
       return res.status(403).json({
         success: false,
@@ -207,15 +314,18 @@ export const submitPostBidQuotation = async (req, res) => {
     }
 
     const now = new Date();
+
     if (now > new Date(pb.endsAt)) {
-      return res
-        .status(403)
-        .json({ success: false, message: "Post-bid window expired" });
+      return res.status(403).json({
+        success: false,
+        message: "Post-bid window expired",
+      });
     }
 
     const eligible = (pb.eligibleTransporters || [])
       .map(String)
       .includes(String(userId));
+
     if (!eligible) {
       return res.status(403).json({
         success: false,
@@ -226,15 +336,19 @@ export const submitPostBidQuotation = async (req, res) => {
     // enforce RR user's range
     const min = Number(pb.rangeMin);
     const max = Number(pb.rangeMax);
+
     if (Number.isFinite(min) && numericPrice < min) {
-      return res
-        .status(400)
-        .json({ success: false, message: `Price must be >= ${min}` });
+      return res.status(400).json({
+        success: false,
+        message: `Price must be >= ${min}`,
+      });
     }
+
     if (Number.isFinite(max) && numericPrice > max) {
-      return res
-        .status(400)
-        .json({ success: false, message: `Price must be <= ${max}` });
+      return res.status(400).json({
+        success: false,
+        message: `Price must be <= ${max}`,
+      });
     }
 
     // allow only 1 post-bid submission total (no updates)
@@ -254,6 +368,7 @@ export const submitPostBidQuotation = async (req, res) => {
 
     // upload optional file
     let uploadedFiles = [];
+
     if (req.file) {
       const file = req.file;
       const filename = Date.now() + "-" + file.originalname;
@@ -266,6 +381,7 @@ export const submitPostBidQuotation = async (req, res) => {
       };
 
       const result = await s3.upload(params).promise();
+
       uploadedFiles.push({
         url: result.Location,
         originalName: file.originalname,
@@ -284,25 +400,38 @@ export const submitPostBidQuotation = async (req, res) => {
       phase: "post_bid",
     });
 
-    // IMPORTANT: do NOT push to tender.quotations if you treat that array as normal-only.
-    // If you currently rely on tender.quotations for anything critical, then push it.
-    // Safer approach: keep pushing for consistency:
+    // Keep pushing for consistency
     await Tender.updateOne(
       { _id: tenderId },
       { $push: { quotations: doc._id } },
     );
 
+    // ✅ NEW: if all eligible transporters submitted, end post-bid immediately
+    const earlyEndResult = await maybeEndPostBidEarly(tenderId);
+
     return res.status(201).json({
       success: true,
-      message: existing
-        ? "Post-bid quotation updated"
+      message: earlyEndResult.ended
+        ? "Post-bid quotation submitted. All eligible transporters have quoted, so post-bid ended early."
         : "Post-bid quotation submitted",
       quotation: doc,
-      endsAt: pb.endsAt,
+
+      // keep old field
+      endsAt: earlyEndResult?.postBid?.endsAt || pb.endsAt,
+
+      // extra useful fields
+      postBidEndedEarly: earlyEndResult.ended,
+      postBidEndReason: earlyEndResult.reason,
+      eligibleCount: earlyEndResult.eligibleCount || null,
+      submittedCount: earlyEndResult.submittedCount || null,
+      postBid: earlyEndResult.postBid || null,
     });
   } catch (err) {
     console.error("submitPostBidQuotation error:", err);
-    return res.status(500).json({ success: false, message: err.message });
+    return res.status(500).json({
+      success: false,
+      message: err.message,
+    });
   }
 };
 

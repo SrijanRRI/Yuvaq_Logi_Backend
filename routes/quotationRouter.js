@@ -1,4 +1,3 @@
-// routes/quotationRoutes.js
 import express from "express";
 import { submitQuotation } from "../controller/quotationController.js";
 import { jwtAuth } from "../middleware/jwtAuth.js";
