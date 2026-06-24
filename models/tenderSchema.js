@@ -166,7 +166,7 @@ const tenderSchema = new mongoose.Schema(
     finalPrice: {
       type: Number,
       required: function () {
-        return this.status === "finalized" || this.status === "closed";
+        return this.status === "finalized";
       },
     },
 
@@ -281,26 +281,38 @@ const tenderSchema = new mongoose.Schema(
 
     postBid: {
       enabled: { type: Boolean, default: false },
+
       status: {
         type: String,
         enum: ["inactive", "active", "ended"],
         default: "inactive",
       },
 
-      // RR user entered range
       rangeMin: { type: Number, default: null },
       rangeMax: { type: Number, default: null },
 
-      // timing (endsAt MUST be biddingEnd + 10 min)
       startedAt: { type: Date, default: null },
       endsAt: { type: Date, default: null },
 
-      // freeze eligible top3 at the moment RR starts post-bid
+      durationMinutes: { type: Number, default: 10 },
+
       eligibleTransporters: [
-        { type: mongoose.Schema.Types.ObjectId, ref: "User" },
+        {
+          type: mongoose.Schema.Types.ObjectId,
+          ref: "user", 
+        },
       ],
 
       notifiedAt: { type: Date, default: null },
+
+      // auto-start audit fields
+      autoStarted: { type: Boolean, default: false },
+      baseL1Price: { type: Number, default: null },
+      baseQuotation: {
+        type: mongoose.Schema.Types.ObjectId,
+        ref: "Quotation",
+        default: null,
+      },
     },
   },
   { timestamps: true },

@@ -17,12 +17,15 @@ import cookieParser from 'cookie-parser'
 import cors from 'cors';
 import autoEndPostBid from './cron/autoEndPostBid.js';
 import startFinalizeDraftTenders from './cron/finalizeDraftTenders.js';
+import autoStartPostBid from './cron/autoStartPostBid.js';
 
 const app = express();
 
 // connectToDb()
 
 // Cron : 
+console.log("[CRON] Starting auto post-bid cron...");
+autoStartPostBid();
 autoEndPostBid();
 startFinalizeDraftTenders();
 
