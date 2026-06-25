@@ -4,6 +4,7 @@ import mongoose from "mongoose";
 import moment from "moment-timezone";
 import { sendMail } from "../utils/sendMail.js";
 import { getBestQuotesPerTransporter } from "../utils/ranking.js";
+import { autoRequestFirstSelectionConfirmation } from "../services/autoSelectionRequest.service.js";
 
 import Quotation from "../models/quotationSchema.js";
 import { s3, BUCKET_NAME } from "../utils/minioClient.js";
@@ -409,6 +410,20 @@ export const submitPostBidQuotation = async (req, res) => {
     // ✅ NEW: if all eligible transporters submitted, end post-bid immediately
     const earlyEndResult = await maybeEndPostBidEarly(tenderId);
 
+    let autoSelectionResult = null;
+
+    if (earlyEndResult.ended) {
+      try {
+        autoSelectionResult =
+          await autoRequestFirstSelectionConfirmation(tenderId);
+      } catch (e) {
+        console.error(
+          "[submitPostBidQuotation] auto selection failed:",
+          e?.message,
+        );
+      }
+    }
+
     return res.status(201).json({
       success: true,
       message: earlyEndResult.ended
@@ -425,6 +440,8 @@ export const submitPostBidQuotation = async (req, res) => {
       eligibleCount: earlyEndResult.eligibleCount || null,
       submittedCount: earlyEndResult.submittedCount || null,
       postBid: earlyEndResult.postBid || null,
+
+      autoSelection: autoSelectionResult,
     });
   } catch (err) {
     console.error("submitPostBidQuotation error:", err);
