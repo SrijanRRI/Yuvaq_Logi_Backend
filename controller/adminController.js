@@ -5,6 +5,7 @@ import Quotation from "../models/quotationSchema.js";
 import { generateSignedUrl } from "../utils/minioClient.js";
 import VehicleCatalog from "../models/vehicleCatalogSchema.js";
 import TransporterVehicle from "../models/transporterVehicleSchema.js";
+import mongoose from "mongoose";
 
 // Get all users pending approval
 export const getPendingApprovals = async (req, res) => {
@@ -536,7 +537,7 @@ const sendVehicleDecisionEmail = async ({
           <p><strong>LogiQ Support Team</strong></p>
         </body>
       </html>`
-            : `<!DOCTYPE html>
+      : `<!DOCTYPE html>
       <html>
         <head><meta charset="UTF-8" /></head>
         <body style="font-family: Arial, sans-serif; line-height: 1.6;">
@@ -924,6 +925,347 @@ export const getEligibleTransportUsers = async (req, res) => {
     return res.status(500).json({
       success: false,
       message: err.message || "Failed to fetch eligible transport users.",
+    });
+  }
+};
+
+const MS_PER_DAY = 24 * 60 * 60 * 1000;
+
+const VALID_SUBSCRIPTION_PLANS = ["monthly", "yearly"];
+const VALID_USER_ROLES = ["admin", "user", "transportUser"];
+
+const escapeRegex = (value = "") =>
+  String(value).replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+
+const getEffectiveSubscriptionInfo = (user, now = new Date()) => {
+  const sub = user.subscription || {};
+  const endsAt = sub.endsAt ? new Date(sub.endsAt) : null;
+
+  const isActive =
+    sub.status === "active" && endsAt && endsAt.getTime() > now.getTime();
+
+  let effectiveStatus = sub.status || "none";
+
+  if (user.role === "admin") {
+    effectiveStatus = "not_required";
+  } else if (isActive) {
+    effectiveStatus = "active";
+  } else if (sub.status === "active" && endsAt && endsAt <= now) {
+    effectiveStatus = "expired";
+  } else if (sub.status === "expired") {
+    effectiveStatus = "expired";
+  } else {
+    effectiveStatus = "none";
+  }
+
+  const daysRemaining = isActive
+    ? Math.ceil((endsAt.getTime() - now.getTime()) / MS_PER_DAY)
+    : 0;
+
+  return {
+    status: sub.status || "none",
+    effectiveStatus,
+    plan: sub.plan || null,
+    startsAt: sub.startsAt || null,
+    endsAt: sub.endsAt || null,
+    updatedAt: sub.updatedAt || null,
+    lastPaymentId: sub.lastPaymentId || null,
+    isActive: !!isActive,
+    daysRemaining,
+  };
+};
+
+const addValidityToDate = (baseDate, { days = 0, months = 0, years = 0 }) => {
+  const nextDate = new Date(baseDate);
+
+  if (years > 0) {
+    nextDate.setUTCFullYear(nextDate.getUTCFullYear() + years);
+  }
+
+  if (months > 0) {
+    nextDate.setUTCMonth(nextDate.getUTCMonth() + months);
+  }
+
+  if (days > 0) {
+    nextDate.setUTCDate(nextDate.getUTCDate() + days);
+  }
+
+  return nextDate;
+};
+
+/**
+ * GET /admin/users/subscriptions
+ *
+ * Query examples:
+ * /admin/users/subscriptions
+ * /admin/users/subscriptions?role=transportUser
+ * /admin/users/subscriptions?subscriptionStatus=active
+ * /admin/users/subscriptions?search=abc
+ * /admin/users/subscriptions?page=1&limit=50
+ */
+export const getAllUsersWithSubscriptions = async (req, res) => {
+  try {
+    if (req.user?.role !== "admin") {
+      return res.status(403).json({
+        success: false,
+        message: "Only admins can view user subscriptions.",
+      });
+    }
+
+    const {
+      search = "",
+      role = "all",
+      subscriptionStatus = "all",
+      approved = "all",
+      page = 1,
+      limit = 50,
+    } = req.query;
+
+    const filter = {};
+
+    if (role !== "all") {
+      if (!VALID_USER_ROLES.includes(String(role))) {
+        return res.status(400).json({
+          success: false,
+          message: "Invalid role filter.",
+        });
+      }
+
+      filter.role = String(role);
+    }
+
+    if (approved !== "all") {
+      if (!["true", "false"].includes(String(approved))) {
+        return res.status(400).json({
+          success: false,
+          message: "Invalid approved filter.",
+        });
+      }
+
+      filter.isApproved = String(approved) === "true";
+    }
+
+    if (search && String(search).trim()) {
+      const regex = new RegExp(escapeRegex(search.trim()), "i");
+
+      filter.$or = [
+        { name: regex },
+        { email: regex },
+        { phone: regex },
+        { gstn: regex },
+        { transportId: regex },
+      ];
+    }
+
+    const users = await userModel
+      .find(filter)
+      .select(
+        "name email phone role gstn transportId isApproved subscription createdAt updatedAt",
+      )
+      .sort({ createdAt: -1 })
+      .lean();
+
+    const now = new Date();
+
+    let rows = users.map((user) => {
+      const subscription = getEffectiveSubscriptionInfo(user, now);
+
+      return {
+        _id: user._id,
+        name: user.name || "",
+        email: user.email || "",
+        phone: user.phone || "",
+        role: user.role || "",
+        gstn: user.gstn || "",
+        transportId: user.transportId || "",
+        isApproved: !!user.isApproved,
+        createdAt: user.createdAt || null,
+        updatedAt: user.updatedAt || null,
+        subscription,
+      };
+    });
+
+    if (subscriptionStatus !== "all") {
+      const allowedStatuses = ["active", "expired", "none", "not_required"];
+
+      if (!allowedStatuses.includes(String(subscriptionStatus))) {
+        return res.status(400).json({
+          success: false,
+          message: "Invalid subscription status filter.",
+        });
+      }
+
+      rows = rows.filter(
+        (row) => row.subscription.effectiveStatus === subscriptionStatus,
+      );
+    }
+
+    const pageNum = Math.max(parseInt(page, 10) || 1, 1);
+    const limitNum = Math.min(Math.max(parseInt(limit, 10) || 50, 1), 200);
+
+    const total = rows.length;
+    const skip = (pageNum - 1) * limitNum;
+    const paginatedRows = rows.slice(skip, skip + limitNum);
+
+    return res.status(200).json({
+      success: true,
+      count: paginatedRows.length,
+      total,
+      page: pageNum,
+      limit: limitNum,
+      totalPages: Math.ceil(total / limitNum),
+      data: paginatedRows,
+    });
+  } catch (err) {
+    console.error("getAllUsersWithSubscriptions error:", err);
+    return res.status(500).json({
+      success: false,
+      message: err.message || "Failed to fetch user subscriptions.",
+    });
+  }
+};
+
+/**
+ * PATCH /admin/users/:userId/subscription/extend
+ *
+ * Body examples:
+ * { "days": 30, "plan": "monthly" }
+ * { "months": 1, "plan": "monthly" }
+ * { "years": 1, "plan": "yearly" }
+ */
+export const extendUserSubscriptionValidity = async (req, res) => {
+  try {
+    if (req.user?.role !== "admin") {
+      return res.status(403).json({
+        success: false,
+        message: "Only admins can extend subscription validity.",
+      });
+    }
+
+    const { userId } = req.params;
+
+    if (!mongoose.isValidObjectId(userId)) {
+      return res.status(400).json({
+        success: false,
+        message: "Invalid user id.",
+      });
+    }
+
+    const {
+      days = 0,
+      months = 0,
+      years = 0,
+      plan,
+      reason = "",
+    } = req.body || {};
+
+    const numericDays = Number(days || 0);
+    const numericMonths = Number(months || 0);
+    const numericYears = Number(years || 0);
+
+    const invalidNumbers =
+      !Number.isInteger(numericDays) ||
+      !Number.isInteger(numericMonths) ||
+      !Number.isInteger(numericYears) ||
+      numericDays < 0 ||
+      numericMonths < 0 ||
+      numericYears < 0;
+
+    if (invalidNumbers) {
+      return res.status(400).json({
+        success: false,
+        message: "days, months and years must be positive whole numbers.",
+      });
+    }
+
+    if (numericDays === 0 && numericMonths === 0 && numericYears === 0) {
+      return res.status(400).json({
+        success: false,
+        message: "Provide at least one validity value: days, months or years.",
+      });
+    }
+
+    if (plan && !VALID_SUBSCRIPTION_PLANS.includes(String(plan))) {
+      return res.status(400).json({
+        success: false,
+        message: "Invalid subscription plan.",
+      });
+    }
+
+    const user = await userModel
+      .findById(userId)
+      .select("name email phone role subscription");
+
+    if (!user) {
+      return res.status(404).json({
+        success: false,
+        message: "User not found.",
+      });
+    }
+
+    if (user.role === "admin") {
+      return res.status(400).json({
+        success: false,
+        message: "Admin does not need subscription.",
+      });
+    }
+
+    const now = new Date();
+
+    const currentEndsAt = user.subscription?.endsAt
+      ? new Date(user.subscription.endsAt)
+      : null;
+
+    // If subscription is currently active, extend from current expiry.
+    // If expired/no subscription, start from now.
+    const baseDate =
+      currentEndsAt && currentEndsAt.getTime() > now.getTime()
+        ? currentEndsAt
+        : now;
+
+    const newEndsAt = addValidityToDate(baseDate, {
+      days: numericDays,
+      months: numericMonths,
+      years: numericYears,
+    });
+
+    const existingSub = user.subscription?.toObject
+      ? user.subscription.toObject()
+      : user.subscription || {};
+
+    const finalPlan =
+      plan || existingSub.plan || (numericYears > 0 ? "yearly" : "monthly");
+
+    user.subscription = {
+      ...existingSub,
+      status: "active",
+      plan: finalPlan,
+      startsAt: existingSub.startsAt || now,
+      endsAt: newEndsAt,
+      lastPaymentId: existingSub.lastPaymentId || null,
+      updatedAt: now,
+    };
+
+    await user.save();
+
+    return res.status(200).json({
+      success: true,
+      message: "Subscription validity extended successfully.",
+      data: {
+        _id: user._id,
+        name: user.name,
+        email: user.email,
+        phone: user.phone,
+        role: user.role,
+        reason: String(reason || "").trim(),
+        subscription: getEffectiveSubscriptionInfo(user.toObject(), now),
+      },
+    });
+  } catch (err) {
+    console.error("extendUserSubscriptionValidity error:", err);
+    return res.status(500).json({
+      success: false,
+      message: err.message || "Failed to extend subscription validity.",
     });
   }
 };
