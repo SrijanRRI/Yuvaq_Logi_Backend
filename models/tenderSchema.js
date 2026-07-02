@@ -279,6 +279,26 @@ const tenderSchema = new mongoose.Schema(
       },
     ],
 
+    // ✅ Auto first confirmation request audit
+    // This is root-level, not inside selection,
+    // because reopenTender currently clears tender.selection.
+    autoSelectionRequestedAt: {
+      type: Date,
+      default: null,
+    },
+
+    autoSelectionRequestedQuotation: {
+      type: Schema.Types.ObjectId,
+      ref: "Quotation",
+      default: null,
+    },
+
+    autoSelectionRequestedTransporter: {
+      type: Schema.Types.ObjectId,
+      ref: "user",
+      default: null,
+    },
+
     postBid: {
       enabled: { type: Boolean, default: false },
 
@@ -299,7 +319,7 @@ const tenderSchema = new mongoose.Schema(
       eligibleTransporters: [
         {
           type: mongoose.Schema.Types.ObjectId,
-          ref: "user", 
+          ref: "user",
         },
       ],
 
@@ -334,5 +354,8 @@ tenderSchema.index({ biddingHardEnd: 1 });
 tenderSchema.index({ biddingSoftEnd: 1 });
 
 tenderSchema.index({ status: 1, draftSubmitAt: 1 });
+
+tenderSchema.index({ status: 1, biddingEnd: 1, autoSelectionRequestedAt: 1 });
+tenderSchema.index({ "postBid.status": 1, "postBid.endsAt": 1, autoSelectionRequestedAt: 1 });
 
 export default mongoose.model("Tender", tenderSchema);

@@ -481,10 +481,11 @@ export const resetPassword = async (req, res, next) => {
     });
   }
 };
+
 export const getAllUsers = async (req, res) => {
   try {
     const users = await userModel
-      .find({ isApproved: "true" })
+      .find({ isApproved: true })
       .select("-password"); // Exclude passwords
 
     return res.status(200).json({
@@ -499,6 +500,7 @@ export const getAllUsers = async (req, res) => {
     });
   }
 };
+
 //get current user
 export const getCurrentUser = async (req, res) => {
   try {
