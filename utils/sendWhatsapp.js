@@ -16,7 +16,7 @@ export async function sendWhatsAppTemplate(toPhoneE164, values) {
     to: toPhoneE164,
     type: "template",
     template: {
-      name: "logiq_tender_notification",
+      name: "logiq_tender_utility",
       language: {
         code: "hi",
       },
